@@ -13,7 +13,7 @@ npm run build
 npm test
 ```
 
-Installa `plugin/` da **Edit → Preferences → Extensions → Add Extension** (zip rinominato `.aseprite-extension`, oppure cartella in `extensions`). In Pi il server MCP viene avviato automaticamente dall’estensione: non eseguire `npm start`. Esegui `/reload`, quindi apri **File → Scripts → Connect CLI AI Editor** in Aseprite e inserisci porta `32123` e nonce mostrati da Pi.
+Installa `plugin/` da **Edit → Preferences → Extensions → Add Extension** (zip rinominato `.aseprite-extension`, oppure cartella in `extensions`). In Pi il server MCP viene avviato automaticamente dall’estensione: non eseguire `npm start`. Esegui `/reload`, quindi apri **File → Scripts → Connect CLI AI Editor** in Aseprite e inserisci porta `32123` e nonce mostrati da Pi. Il pannello modeless **AI Editor** appare all'avvio: rosso significa non associato, verde indica che il server ha accettato il pairing. Se lo chiudi, riaprilo da **File → Scripts → Show AI Editor Status**.
 
 ## Provider
 
@@ -68,8 +68,8 @@ aseprite -b --script-param multiplePalette=/path/multi-palette.aseprite --script
 
 ### Smoke test GUI/WebSocket
 
-1. Avvia `AI_EDITOR_PORT=0 npm start`; annota porta e nonce da stderr.
-2. Installa `plugin/`, poi **File → Scripts → Connect CLI AI Editor**. Verifica nonce corretto; quindi nonce errato, replay e seconda connessione (rifiutati).
+1. Avvia `AI_EDITOR_PORT=0 npm start`; annota porta e nonce da stderr. Il pannello **AI Editor** deve essere rosso.
+2. Installa `plugin/`, poi **File → Scripts → Connect CLI AI Editor**. Con il nonce corretto il pallino deve diventare verde; arrestando Node deve tornare rosso. Ripeti con nonce errato, replay e seconda connessione: devono essere rifiutati e il pallino deve restare rosso.
 3. Tramite client MCP chiama `read_snapshot`, `confirm_mask` e `apply_diff`; confronta risposta/canvas. In `confirm_mask`, modifica la selezione e prova sia conferma sia annullamento (`confirmation_required`, sprite invariato).
 4. Leggi uno snapshot, modifica a mano pixel/palette/frame/layer/selezione e invia il vecchio diff: atteso `stale_snapshot`, nessuna scrittura.
 5. Verifica disconnessione e timeout. Registra versione Aseprite, modalità, esito e passi riproducibili per ogni difetto.

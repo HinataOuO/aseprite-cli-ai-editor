@@ -83,4 +83,20 @@ if app.params.multiplePalette then
   fails("unsupported_document",state.read); close(sprite)
 end
 
+-- Real Aseprite JSON objects are userdata in 1.3.18; dispatch must accept them.
+do
+  local path=app.fs.joinPath(root,"plugin","main.lua")
+  local file=assert(io.open(path,"r")); local source=file:read("*a"); file:close()
+  source=assert(source:gsub("local state,apply,ws,pluginRef","local state,apply,ws,pluginRef=...",1)).."\nreturn dispatch"
+  local sent,reads,applies
+  local sender={sendText=function(_,message) sent=json.decode(message) end}
+  local dispatch=assert(load(source,"@"..path))({read=function() reads=(reads or 0)+1; return {token="test"} end},{apply=function() applies=(applies or 0)+1; return {applied=0} end},sender)
+  dispatch('{"version":"1.0","id":"snapshot","type":"read_snapshot"}')
+  assert(reads==1 and sent.id=="snapshot" and sent.ok and sent.payload.token=="test")
+  dispatch('{"version":"1.0","id":"apply","type":"apply_diff","payload":{"diff":{}}}')
+  assert(applies==1 and sent.id=="apply" and sent.ok)
+  dispatch('{"version":"1.0","id":"invalid","type":"apply_diff","payload":1}')
+  assert(applies==1 and sent.id=="invalid" and not sent.ok and sent.error.code=="invalid_message")
+end
+
 print("read-state ok: Aseprite "..tostring(app.version)..(app.params.multiplePalette and " +multi-palette" or ""))

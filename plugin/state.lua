@@ -99,7 +99,7 @@ function M.read()
     colorRefs[c.rgbaPixel]=c.alpha==0 and -1 or i
   end
   local rawPixels=pixels(sprite,cel,bounds,colorRefs)
-  local basis=json.encode({sprite.id,sprite.width,sprite.height,mode(sprite),frame.frameNumber,tostring(layer.uuid),cel and cel.image.id or 0,cel and cel.image.version or 0,palette,selection,rawPixels})
+  local basis=json.encode({sprite.id,sprite.width,sprite.height,mode(sprite),frame.frameNumber,tostring(layer.uuid),cel and cel.image.id or 0,cel and cel.image.version or 0,palette,selection or false,rawPixels})
   return {
     token=sha256(basis), spriteId=sprite.id, width=sprite.width, height=sprite.height, colorMode=mode(sprite), frame=frame.frameNumber,
     activeLayerUuid=tostring(layer.uuid), layers={{uuid=tostring(layer.uuid),imageId=cel and cel.image.id or nil,imageVersion=cel and cel.image.version or nil,editable=layer.isEditable}},

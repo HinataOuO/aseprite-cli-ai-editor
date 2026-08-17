@@ -1,6 +1,25 @@
-local state,apply,ws,pluginRef
+local state,apply,ws,pluginRef,statusDialog
+local paired,exiting=false,false
 
-local function send(message) if ws then ws:sendText(json.encode(message)) end end
+local function setPaired(value)
+  paired=value
+  if statusDialog then statusDialog:repaint() end
+end
+
+local function showStatus()
+  if statusDialog then statusDialog:show{wait=false}; return end
+  local dialog
+  dialog=Dialog{title="AI Editor",onclose=function() if statusDialog==dialog then statusDialog=nil end end}
+  dialog:canvas{id="status",width=28,height=28,onpaint=function(ev)
+    local gc=ev.context
+    gc.color=paired and Color{r=35,g=170,b=70} or Color{r=210,g=45,b=45}
+    gc:beginPath(); gc:oval(Rectangle(7,7,14,14)); gc:fill()
+  end}
+  statusDialog=dialog
+  dialog:show{wait=false}
+end
+
+local function send(message) if ws and paired then ws:sendText(json.encode(message)) end end
 local errorCodes={"invalid_message","incompatible_version","payload_too_large","pairing_failed","timeout","disconnected","unsupported_document","stale_snapshot","unauthorized_change","provider_unavailable","validation_failed","confirmation_required","attempts_exhausted","apply_failed"}
 local function response(id,ok,payload,err)
   local value={version="1.0",id=id,ok=ok}
@@ -41,13 +60,17 @@ local function confirmMask(id,mask)
   dialog:show{wait=false}
 end
 
-local function dispatch(raw)
+local function isObject(value) return type(value)=="table" or type(value)=="userdata" end
+local function dispatch(raw,socket)
   local ok,msg=pcall(json.decode,raw)
-  if not ok or type(msg)~="table" or msg.version~="1.0" or type(msg.id)~="string" then return end
-  if msg.ok~=nil then return end
+  if not ok or not isObject(msg) or msg.version~="1.0" or type(msg.id)~="string" then return end
+  if msg.ok~=nil then
+    if msg.id=="pair" and ws==socket then setPaired(msg.ok==true) end
+    return
+  end
   if msg.type=="read_snapshot" then
     local success,result=pcall(state.read); response(msg.id,success,success and result or nil,success and nil or result)
-  elseif type(msg.payload)~="table" then response(msg.id,false,nil,"invalid_message: payload")
+  elseif not isObject(msg.payload) then response(msg.id,false,nil,"invalid_message: payload")
   elseif msg.type=="confirm_mask" then
     local success,result=pcall(confirmMask,msg.id,msg.payload.mask); if not success then response(msg.id,false,nil,result) end
   elseif msg.type=="apply_diff" then
@@ -56,6 +79,7 @@ local function dispatch(raw)
 end
 
 local function connect()
+  setPaired(false)
   if ws then ws:close(); ws=nil end
   local prefs=pluginRef.preferences
   local dialog=Dialog{title="Connect CLI AI Editor"}
@@ -65,10 +89,14 @@ local function connect()
     local data=dialog.data; prefs.port=tonumber(data.port); dialog:close()
     local socket
     socket=WebSocket{url="ws://127.0.0.1:"..prefs.port,onreceive=function(kind,payload)
+      if exiting then return end
       if kind==WebSocketMessageType.OPEN then
-        socket:sendText(json.encode{version="1.0",id="pair",type="pair",payload={nonce=data.nonce,capabilities={asepriteVersion=tostring(app.version),protocolVersion="1.0",methods={"read_snapshot","confirm_mask","apply_diff"}}}})
-      elseif kind==WebSocketMessageType.TEXT then dispatch(payload)
-      elseif kind==WebSocketMessageType.CLOSE and ws==socket then ws=nil end
+        if ws==socket then
+          setPaired(false)
+          socket:sendText(json.encode{version="1.0",id="pair",type="pair",payload={nonce=data.nonce,capabilities={asepriteVersion=tostring(app.version),protocolVersion="1.0",methods={"read_snapshot","confirm_mask","apply_diff"}}}})
+        end
+      elseif kind==WebSocketMessageType.TEXT and ws==socket then dispatch(payload,socket)
+      elseif kind==WebSocketMessageType.CLOSE and ws==socket then setPaired(false) end
     end,deflate=false,minreconnectwait=1,maxreconnectwait=3}
     ws=socket; socket:connect()
   end}
@@ -77,10 +105,16 @@ local function connect()
 end
 
 function init(plugin)
-  pluginRef=plugin
+  pluginRef=plugin; exiting=false; setPaired(false)
   state=dofile(plugin.path.."/state.lua")
   apply=dofile(plugin.path.."/apply.lua"); apply.configure(state)
   plugin:newCommand{id="AsepriteCliAiConnect",title="Connect CLI AI Editor",group="file_scripts",onclick=connect}
+  plugin:newCommand{id="AsepriteCliAiStatus",title="Show AI Editor Status",group="file_scripts",onclick=showStatus}
+  showStatus()
 end
 
-function exit(plugin) if ws then ws:close(); ws=nil end end
+function exit(plugin)
+  exiting=true; paired=false
+  if statusDialog then local dialog=statusDialog; statusDialog=nil; dialog:close() end
+  if ws then local socket=ws; ws=nil; socket:close() end
+end

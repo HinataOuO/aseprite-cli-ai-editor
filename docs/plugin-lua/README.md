@@ -20,4 +20,6 @@ L'immagine del cel viene clonata prima dei pixel, rompendo correttamente eventua
 
 ## Connessione
 
-Il plugin è client WebSocket verso `ws://127.0.0.1:<porta>`, senza deflate. Il comando **Connect CLI AI Editor** richiede il nonce monouso generato dal server. Nessun Lua arbitrario viene ricevuto o eseguito.
+Il plugin è client WebSocket verso `ws://127.0.0.1:<porta>`, senza deflate. Il pannello modeless **AI Editor**, aperto all'avvio e riapribile da **File → Scripts → Show AI Editor Status**, mostra un pallino rosso finché il pairing non è confermato e verde solo dopo la risposta positiva del server. Chiusura, rifiuto, riconnessione e arresto del plugin ripristinano il rosso.
+
+Apri **File → Scripts → Connect CLI AI Editor**, inserisci porta e nonce monouso generati dal server e premi **Connect**. Un nonce errato lascia il pannello rosso. Nessun Lua arbitrario viene ricevuto o eseguito.
