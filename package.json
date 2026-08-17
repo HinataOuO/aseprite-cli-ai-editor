@@ -1,0 +1,29 @@
+{
+  "name": "aseprite-cli-ai-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/index.js",
+    "test": "tsx --test tests/*.test.ts tests/e2e/*.test.ts",
+    "test:aseprite": "aseprite -b --script tests/lua/read-state.lua && aseprite -b --script tests/lua/apply-diff.lua && aseprite -b --script tests/lua/undo.lua",
+    "verify": "npm run build && npm test && npm run test:aseprite"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "pngjs": "^7.0.0",
+    "ws": "^8.18.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/pngjs": "^6.0.5",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.20.0",
+    "typescript": "^5.7.3"
+  }
+}

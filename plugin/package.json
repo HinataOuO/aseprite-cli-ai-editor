@@ -1,0 +1,11 @@
+{
+  "name": "aseprite-cli-ai-editor",
+  "displayName": "CLI AI Editor Bridge",
+  "description": "Authenticated local bridge for declarative AI edits",
+  "version": "0.1.0",
+  "author": { "name": "Aseprite CLI AI Editor" },
+  "publisher": "aseprite-cli-ai-editor",
+  "license": "MIT",
+  "categories": ["Scripts"],
+  "contributes": { "scripts": [{ "path": "./main.lua" }] }
+}

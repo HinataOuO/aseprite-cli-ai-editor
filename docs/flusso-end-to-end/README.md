@@ -1,56 +1,15 @@
-# Flusso End To End
+# Flusso end-to-end MVP
 
-## Scopo
+1. Il server MCP apre un WebSocket su `127.0.0.1` e mostra su stderr un nonce monouso.
+2. Il comando del plugin connette Aseprite e invia nonce, versione e capability. Nonce errati/replay chiudono la connessione.
+3. `read_snapshot` legge solo frame/layer attivi, palette, selezione e crop minimo. Lo snapshot SHA-256 lega sprite, frame, layer UUID, image ID/version, palette, trasparenza, maschera e pixel.
+4. La selezione presente diventa l'unica maschera. Senza selezione, Vision propone una maschera: `<70` richiede una nuova proposta; `70–90` conferma/correzione; `>90` può evitare conferma solo dopo 30 campioni e approvazione modello/versione. Nel bootstrap la conferma è sempre obbligatoria.
+5. Il server costruisce una specifica immutabile. Più layer richiedono UUID espliciti e confermati.
+6. Al provider va solo crop PNG, maschera, riferimenti palette e intento minimo. Gli output sono input non fidati.
+7. Il server valida token, dimensioni, palette/trasparenza, maschera, frame e layer, quindi produce il diff minimo. I retry ricevono soltanto errori e diff precedente; massimo tre.
+8. Lo score semantico resta osservativo e versionato. Fino all'approvazione della calibrazione richiede sempre conferma; dopo: `<50` retry, `50–70` conferma, `>70` applicazione.
+9. Immediatamente prima della scrittura il plugin rivalida lo snapshot, clona l'immagine, applica il diff e assegna `cel.image` in una sola `app.transaction`. Ogni errore fa rollback; la UI si aggiorna solo dopo commit.
 
-Descrivere i due percorsi iniziali del sistema senza trasformarli in un protocollo definitivo.
+## Punti di arresto
 
-## Responsabilità
-
-### Prima generazione
-
-1. L'utente descrive il disegno all'[[../agente-ai-cli/README|Agente Ai Cli]].
-2. L'[[../agente-ai-cli/agente-art-director|Agente Art Director]] raccoglie i vincoli e chiede solo i chiarimenti indispensabili.
-3. L'agente invia una richiesta strutturata al [[../server-mcp/README|Server MCP]].
-4. Il server valida e traduce la richiesta in operazioni dichiarative.
-5. Il [[../plugin-lua/README|Plugin Lua]] applica le operazioni in una transazione Aseprite compatibile con undo.
-6. Plugin e server restituiscono stato, risultato o errori; l'agente li presenta all'utente.
-
-### Modifica puntuale
-
-1. L'utente indica il risultato esistente, l'area da cambiare e ciò che deve restare invariato.
-2. L'agente legge solo il contesto necessario di sprite, frame, layer o selezione.
-3. L'Art Director struttura la differenza richiesta e le precondizioni.
-4. Il server valida destinazioni e operazioni, rifiutando riferimenti obsoleti o ambigui.
-5. Il plugin applica la modifica in una transazione annullabile e aggiorna il documento aperto.
-6. Lo stato aggiornato torna all'utente per un'eventuale iterazione.
-
-## Input
-
-- richiesta iniziale o modifica puntuale;
-- contesto del documento corrente;
-- vincoli artistici e operativi.
-
-## Output
-
-Un documento aggiornato in Aseprite e un esito strutturato, oppure un errore utilizzabile per correggere o ripetere la richiesta.
-
-## Dipendenze
-
-- responsabilità separate dei tre livelli;
-- [[../protocollo-dati/README|Protocollo Dati]] condiviso;
-- transazioni e undo disponibili nel plugin;
-- trasporto operativo tra server e plugin.
-
-## Fuori ambito
-
-- dettaglio delle chiamate API;
-- schema definitivo dei messaggi;
-- prestazioni garantite;
-- gestione multiutente o distribuita.
-
-## Decisioni aperte
-
-- punti di conferma dell'utente;
-- comportamento in caso di documento cambiato durante il flusso;
-- quantità di contesto necessaria nei due scenari;
-- criterio di completamento e latenza attesa di ogni iterazione.
+`unsupported_document`, pairing fallito, provider indisponibile, token scaduto, output non valido, rifiuto utente o terzo tentativo lasciano il documento invariato. Una modifica concorrente durante Vision produce `stale_snapshot` e richiede una nuova lettura.

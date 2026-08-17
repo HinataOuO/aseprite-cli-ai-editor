@@ -1,47 +1,23 @@
-# Plugin Lua
+# Plugin Lua MVP
 
-## Scopo
+Estensione Aseprite `>=1.3.0` in `plugin/`.
 
-Collegare in modo controllato il sistema ad Aseprite e applicare al documento aperto soltanto operazioni dichiarative validate.
+## Capability
 
-## Responsabilità
+- `read_snapshot`: legge sprite `16/32/64`, Indexed/RGB, frame corrente, layer attivo editabile, cel/image ID/version, palette singola, trasparenza, selezione bitmask e crop minimo in riferimenti palette.
+- `confirm_mask`: mostra la proposta come selezione Aseprite; l'utente può correggerla prima di restituire la maschera finale.
+- `apply_diff`: rivalida snapshot e destinazione, poi applica riferimenti palette/trasparenza.
 
-- ricevere operazioni dal [[../server-mcp/README|Server MCP]];
-- verificare precondizioni legate allo stato effettivo del documento;
-- usare le API Aseprite per modificare sprite, frame, layer e selezioni;
-- raggruppare le modifiche in transazioni compatibili con undo;
-- aggiornare e rendere visibile il documento aperto;
-- restituire stato, risultati ed errori al server.
+Grayscale, tilemap, reference layer, group, layer bloccati, palette multiple e dimensioni diverse producono `unsupported_document`.
 
-## Input
+## Coordinate e stato
 
-- operazioni dichiarative versionate e validate;
-- identificatori e precondizioni sul documento corrente;
-- richiesta di lettura dello stato necessario.
+Le coordinate esposte sono canvas-relative. Lettura e scrittura traducono `cel.position`, fanno clipping e trattano l'assenza del cel come trasparenza. `Sprite.id`, `Layer.uuid`, frame number, `Image.id/version` e hash SHA-256 formano la precondizione di concorrenza.
 
-## Output
+## Transazione e undo
 
-- documento Aseprite aggiornato;
-- esito delle operazioni;
-- stato minimo richiesto dal server;
-- errori di precondizione o delle API.
+L'immagine del cel viene clonata prima dei pixel, rompendo correttamente eventuali linked cel. Se serve spazio, il clone viene espanso al canvas. Creazione cel, assegnazione immagine e pixel sono in una sola `app.transaction`; un errore genera rollback. `app.refresh()` viene chiamato solo dopo commit e una sola operazione Undo ripristina tutto.
 
-## Dipendenze
+## Connessione
 
-- [Aseprite](https://www.aseprite.org/) e API Lua supportate;
-- [[../protocollo-dati/README|Protocollo Dati]];
-- trasporto locale o remoto ancora da scegliere.
-
-## Fuori ambito
-
-- interpretare richieste in linguaggio naturale;
-- correggere decisioni artistiche;
-- accettare o eseguire Lua arbitrario;
-- sostituire la validazione strutturale del server.
-
-## Decisioni aperte
-
-- API Aseprite effettivamente disponibili per ogni operazione;
-- trasporto e modello di connessione;
-- granularità delle transazioni e comportamento su errore parziale;
-- quantità e frequenza dello stato restituito.
+Il plugin è client WebSocket verso `ws://127.0.0.1:<porta>`, senza deflate. Il comando **Connect CLI AI Editor** richiede il nonce monouso generato dal server. Nessun Lua arbitrario viene ricevuto o eseguito.

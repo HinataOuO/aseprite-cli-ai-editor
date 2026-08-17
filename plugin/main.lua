@@ -1,0 +1,86 @@
+local state,apply,ws,pluginRef
+
+local function send(message) if ws then ws:sendText(json.encode(message)) end end
+local errorCodes={"invalid_message","incompatible_version","payload_too_large","pairing_failed","timeout","disconnected","unsupported_document","stale_snapshot","unauthorized_change","provider_unavailable","validation_failed","confirmation_required","attempts_exhausted","apply_failed"}
+local function response(id,ok,payload,err)
+  local value={version="1.0",id=id,ok=ok}
+  if ok then value.payload=payload else
+    err=tostring(err); local code="apply_failed"
+    for _,candidate in ipairs(errorCodes) do if err:find(candidate,1,true) then code=candidate; break end end
+    value.error={code=code,message=err,retryable=false}
+  end
+  send(value)
+end
+
+local B64="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local function decode64(data)
+  data=data:gsub('[^'..B64..'=]','')
+  return (data:gsub('.',function(x)
+    if x=='=' then return '' end local r,f='',B64:find(x,1,true)-1
+    for i=6,1,-1 do r=r..(f%2^i-f%2^(i-1)>0 and '1' or '0') end return r
+  end):gsub('%d%d%d?%d?%d?%d?%d?%d?',function(x)
+    if #x~=8 then return '' end local c=0 for i=1,8 do c=c+(x:sub(i,i)=='1' and 2^(8-i) or 0) end return string.char(c)
+  end))
+end
+
+local function installMask(mask)
+  local bytes=decode64(mask.bits); local b=mask.bounds; local selection=Selection()
+  for i=0,b.width*b.height-1 do
+    local byte=bytes:byte(math.floor(i/8)+1) or 0
+    if (byte & (1 << (i%8))) ~= 0 then selection:add(Rectangle(b.x+i%b.width,b.y+math.floor(i/b.width),1,1)) end
+  end
+  app.activeSprite.selection=selection
+end
+
+local function confirmMask(id,mask)
+  installMask(mask); app.refresh()
+  local dialog=Dialog{title="Confirm AI edit mask"}
+  dialog:label{text="Edit the selection on canvas, then confirm."}
+  dialog:button{text="Use current selection",onclick=function() dialog:close(); response(id,true,{mask=state.maskFromSelection(app.activeSprite)}) end}
+  dialog:button{text="Cancel",onclick=function() dialog:close(); response(id,false,nil,"confirmation_required: cancelled") end}
+  dialog:show{wait=false}
+end
+
+local function dispatch(raw)
+  local ok,msg=pcall(json.decode,raw)
+  if not ok or type(msg)~="table" or msg.version~="1.0" or type(msg.id)~="string" then return end
+  if msg.ok~=nil then return end
+  if msg.type=="read_snapshot" then
+    local success,result=pcall(state.read); response(msg.id,success,success and result or nil,success and nil or result)
+  elseif type(msg.payload)~="table" then response(msg.id,false,nil,"invalid_message: payload")
+  elseif msg.type=="confirm_mask" then
+    local success,result=pcall(confirmMask,msg.id,msg.payload.mask); if not success then response(msg.id,false,nil,result) end
+  elseif msg.type=="apply_diff" then
+    local success,result=pcall(apply.apply,msg.payload.diff); response(msg.id,success,success and result or nil,success and nil or result)
+  else response(msg.id,false,nil,"invalid_message: unknown method") end
+end
+
+local function connect()
+  if ws then ws:close(); ws=nil end
+  local prefs=pluginRef.preferences
+  local dialog=Dialog{title="Connect CLI AI Editor"}
+  dialog:entry{id="port",label="Port",text=tostring(prefs.port or 32123)}
+  dialog:entry{id="nonce",label="Pairing nonce",text=""}
+  dialog:button{text="Connect",onclick=function()
+    local data=dialog.data; prefs.port=tonumber(data.port); dialog:close()
+    local socket
+    socket=WebSocket{url="ws://127.0.0.1:"..prefs.port,onreceive=function(kind,payload)
+      if kind==WebSocketMessageType.OPEN then
+        socket:sendText(json.encode{version="1.0",id="pair",type="pair",payload={nonce=data.nonce,capabilities={asepriteVersion=tostring(app.version),protocolVersion="1.0",methods={"read_snapshot","confirm_mask","apply_diff"}}}})
+      elseif kind==WebSocketMessageType.TEXT then dispatch(payload)
+      elseif kind==WebSocketMessageType.CLOSE and ws==socket then ws=nil end
+    end,deflate=false,minreconnectwait=1,maxreconnectwait=3}
+    ws=socket; socket:connect()
+  end}
+  dialog:button{text="Cancel"}
+  dialog:show()
+end
+
+function init(plugin)
+  pluginRef=plugin
+  state=dofile(plugin.path.."/state.lua")
+  apply=dofile(plugin.path.."/apply.lua"); apply.configure(state)
+  plugin:newCommand{id="AsepriteCliAiConnect",title="Connect CLI AI Editor",group="file_scripts",onclick=connect}
+end
+
+function exit(plugin) if ws then ws:close(); ws=nil end end

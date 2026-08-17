@@ -1,63 +1,79 @@
-# Aseprite CLI AI Editor
+# Aseprite CLI AI Editor — MVP
 
-## Scopo
+Server MCP Node/TypeScript e plugin Aseprite Lua per modifiche pixel dichiarative, limitate da selezione, palette e snapshot. Aseprite resta autorità e ogni applicazione è una transazione undo.
 
-Definire un sistema con cui un utente possa generare o modificare contenuti in Aseprite tramite un agente AI da riga di comando, mantenendo Aseprite come applicazione esterna.
+## Requisiti e installazione
 
-## Responsabilità
+- Node.js 20+
+- Aseprite 1.3.0+
 
-Questo documento indicizza la visione, i componenti e il flusso del progetto senza fissare ancora codice, trasporto o protocollo.
+```sh
+npm install
+npm run build
+npm test
+```
 
-## Input
+Installa `plugin/` da **Edit → Preferences → Extensions → Add Extension** (zip rinominato `.aseprite-extension`, oppure cartella in `extensions`). In Pi il server MCP viene avviato automaticamente dall’estensione: non eseguire `npm start`. Esegui `/reload`, quindi apri **File → Scripts → Connect CLI AI Editor** in Aseprite e inserisci porta `32123` e nonce mostrati da Pi.
 
-- richiesta visiva dell'utente;
-- contesto leggibile del documento Aseprite corrente.
+## Provider
 
-## Output
+L'adapter `OpenAICompatibleProvider` accetta `baseUrl`, modello, versione e API key. Endpoint loopback funzionano senza consenso cloud. Per endpoint remoti impostare esplicitamente `AI_EDITOR_CLOUD_CONSENT=1`; le credenziali restano in ambiente e non vengono loggate. Il fake provider è solo per test.
 
-Operazioni dichiarative validate che il plugin applica al documento aperto, con stato o errori restituiti all'agente.
+## Limiti MVP
 
-## Dipendenze
+- sprite quadrati `16×16`, `32×32`, `64×64`;
+- modalità Indexed/RGB, palette singola;
+- niente grayscale, tilemap, reference layer o layer bloccati;
+- frame corrente; un layer di default, più layer solo con UUID espliciti e conferma;
+- conferma sempre obbligatoria finché score e modello/versione non sono calibrati;
+- massimo tre tentativi.
 
-- [Aseprite](https://www.aseprite.org/) (`[[Aseprite]]`), dipendenza esterna;
-- un agente CLI compatibile con MCP;
-- API Lua di Aseprite.
+## Privacy e recovery
 
-## Fuori ambito
+Al provider va soltanto crop minimo PNG, maschera, palette e intento minimo. Cache e campioni JSONL sono locali, content-addressed, soggetti a retention e cancellabili con `LocalStore.clear()`; immagini complete e credenziali sono rifiutate. Il bridge ascolta soltanto `127.0.0.1`, usa un nonce monouso e limita i messaggi a 1 MiB.
 
-- sostituire Aseprite;
-- eseguire Lua arbitrario generato dall'AI;
-- definire in questa fase implementazione e schema definitivi.
+Su `stale_snapshot`, riconnettere/rileggere lo stato e confermare una nuova maschera. Su errore d'applicazione la transazione viene annullata; un solo Undo ripristina una modifica riuscita.
 
-## Decisioni aperte
+## Verifica con Aseprite reale
 
-- trasporto tra server MCP e plugin;
-- significato misurabile di “tempo reale”;
-- rappresentazione di pixel, forme e immagini;
-- accesso allo stato corrente di Aseprite.
+Prerequisiti: `aseprite` nel `PATH`, versione `>=1.3.0`. Il comando unico esegue baseline Node e matrice Lua headless:
 
-## Flusso generale
+```sh
+npm run verify
+```
 
-1. L'utente descrive il risultato o la modifica all'[[docs/agente-ai-cli/README|Agente Ai Cli]].
-2. L'[[docs/agente-ai-cli/agente-art-director|Agente Art Director]] traduce l'intento visivo in una richiesta strutturata.
-3. Il [[docs/server-mcp/README|Server MCP]] valida e riduce la richiesta a operazioni dichiarative.
-4. Il [[docs/plugin-lua/README|Plugin Lua]] applica le operazioni tramite le API di Aseprite.
-5. Stato, risultati o errori tornano all'agente.
+Comandi separati, utili per isolare un difetto:
 
-Dettaglio: [[docs/flusso-end-to-end/README|Flusso End To End]].
+```sh
+npm run build
+npm test
+aseprite -b --script tests/lua/read-state.lua
+aseprite -b --script tests/lua/apply-diff.lua
+aseprite -b --script tests/lua/undo.lua
+```
 
-## Componenti
+| Script/test | Modalità | Copertura |
+|---|---|---|
+| `tests/lua/read-state.lua` | headless | 16/32/64, Indexed/RGB, crop e selezione irregolare, cel traslato/assente, token, documenti non supportati |
+| `tests/lua/apply-diff.lua` | headless | apply Indexed/RGB, trasparenza, espansione cel, bordi, stale state e preflight atomico |
+| `tests/lua/undo.lua` | headless | caso braccio 32×32, linked cel, isolamento layer/frame, singolo Undo e batch invalido |
+| `tests/*.test.ts`, `tests/e2e/*.test.ts` | Node | protocollo, pipeline, retry, limiti, bridge e MCP |
+| pairing, `confirm_mask` | GUI manuale | WebSocket/plugin e correzione pixel-per-pixel |
 
-- [[docs/visione/README|Visione]] — problema, esperienza desiderata e confini.
-- [[docs/agente-ai-cli/README|Agente Ai Cli]] — interazione con utente e server.
-- [[docs/agente-ai-cli/agente-art-director|Agente Art Director]] — interpretazione artistica strutturata.
-- [[docs/server-mcp/README|Server MCP]] — strumenti, validazione e comunicazione.
-- [[docs/plugin-lua/README|Plugin Lua]] — integrazione controllata con Aseprite.
-- [[docs/protocollo-dati/README|Protocollo Dati]] — contratto dichiarativo ancora da definire.
-- [[docs/flusso-end-to-end/README|Flusso End To End]] — scenari principali.
+Aseprite non offre un costruttore Lua pubblico per documenti multi-palette. Per validare un fixture reale:
 
-## Stato di progettazione
+```sh
+aseprite -b --script-param multiplePalette=/path/multi-palette.aseprite --script tests/lua/read-state.lua
+```
 
-Scheletro documentale iniziale. Nessun componente sorgente, protocollo definitivo o scelta di trasporto è stato approvato. La prossima sezione da sviluppare, una alla volta, è [[docs/protocollo-dati/README|Protocollo Dati]].
+### Smoke test GUI/WebSocket
 
-Piano approvato: [[docs/PIANO-MVP|Pipeline ibrida MVP]].
+1. Avvia `AI_EDITOR_PORT=0 npm start`; annota porta e nonce da stderr.
+2. Installa `plugin/`, poi **File → Scripts → Connect CLI AI Editor**. Verifica nonce corretto; quindi nonce errato, replay e seconda connessione (rifiutati).
+3. Tramite client MCP chiama `read_snapshot`, `confirm_mask` e `apply_diff`; confronta risposta/canvas. In `confirm_mask`, modifica la selezione e prova sia conferma sia annullamento (`confirmation_required`, sprite invariato).
+4. Leggi uno snapshot, modifica a mano pixel/palette/frame/layer/selezione e invia il vecchio diff: atteso `stale_snapshot`, nessuna scrittura.
+5. Verifica disconnessione e timeout. Registra versione Aseprite, modalità, esito e passi riproducibili per ogni difetto.
+
+Risultato locale corrente: baseline Node superata; matrice Aseprite non eseguita perché il binario non è disponibile nell’ambiente.
+
+Documentazione: [protocollo](docs/protocollo-dati/README.md), [flusso](docs/flusso-end-to-end/README.md), [plugin](docs/plugin-lua/README.md), [server](docs/server-mcp/README.md).
