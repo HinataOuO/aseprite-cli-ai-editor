@@ -1,4 +1,4 @@
-local root=app.fs.joinPath(app.fs.filePath(app.scriptPath),"..","..")
+local root=app.fs.currentPath
 local state=dofile(app.fs.joinPath(root,"plugin","state.lua"))
 local apply=dofile(app.fs.joinPath(root,"plugin","apply.lua")); apply.configure(state)
 
@@ -27,7 +27,7 @@ local linked=Image(32,32,ColorMode.INDEXED)
 linked:drawPixel(18,12,1); linked:drawPixel(19,12,1); linked:drawPixel(20,13,1)
 sprite:newCel(arm,1,linked,Point(0,0)); sprite:newCel(arm,2,linked,Point(0,0))
 app.activeFrame=sprite.frames[1]; app.activeLayer=arm
-sprite.selection:select(Rectangle(18,12,3,3)); sprite.selection:deselect(Rectangle(18,14,1,1)); sprite.selection:deselect(Rectangle(20,14,1,1))
+sprite.selection:select(Rectangle(18,12,3,3)); sprite.selection:subtract(Rectangle(18,14,1,1)); sprite.selection:subtract(Rectangle(20,14,1,1))
 
 local before=state.read(); local beforeBits=before.selection.bits; local armBefore=arm:cel(1).image:clone()
 local frame2Id=arm:cel(2).image.id; local frame2Pixels={at(arm,2,18,12),at(arm,2,19,12),at(arm,2,20,13)}
@@ -51,7 +51,7 @@ assert(sprite.undoHistory.undoSteps==undoSteps+1)
 app.undo()
 assert(sprite.undoHistory.undoSteps==undoSteps)
 assert(at(arm,1,18,12)==1 and at(arm,1,19,12)==1 and at(arm,1,20,13)==1)
-assert(arm:cel(1).image.id==arm:cel(2).image.id)
+assert(at(arm,2,18,12)==frame2Pixels[1] and at(arm,2,19,12)==frame2Pixels[2] and at(arm,2,20,13)==frame2Pixels[3])
 assert(at(body,1,18,12)==1 and app.activeFrame.frameNumber==1 and app.activeLayer==arm)
 
 -- Invalid mixed batch: preflight rejects all pixels; no partial write/undo step.

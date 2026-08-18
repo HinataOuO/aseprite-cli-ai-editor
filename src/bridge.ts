@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { MAX_PAYLOAD_BYTES, PROTOCOL_VERSION, type Capabilities, type ProtocolError, type Request, type Response, validateEnvelope } from "./protocol.js";
 
-interface Pending { resolve(value: unknown): void; reject(reason: Error): void; timer: NodeJS.Timeout }
+interface Pending { resolve(value: unknown): void; reject(reason: Error): void; timer: NodeJS.Timeout; type:string; requestBytes:number; started:number }
 
 export class BridgeServer {
   readonly nonce: string;
@@ -63,6 +63,7 @@ export class BridgeServer {
     const pending = this.pending.get(message.id);
     if (!pending || !("ok" in message)) return;
     clearTimeout(pending.timer); this.pending.delete(message.id);
+    console.error(JSON.stringify({component:"bridge",method:pending.type,durationMs:Math.round((performance.now()-pending.started)*100)/100,requestBytes:pending.requestBytes,responseBytes:Buffer.byteLength(raw)}));
     if (message.ok) pending.resolve(message.payload);
     else pending.reject(Object.assign(new Error(message.error?.message ?? "bridge error"), { protocolError: message.error }));
   }
@@ -74,7 +75,7 @@ export class BridgeServer {
     if (Buffer.byteLength(message) > MAX_PAYLOAD_BYTES) return Promise.reject(new Error("payload_too_large"));
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error("timeout")); }, this.timeoutMs);
-      this.pending.set(id, { resolve: value => resolve(value as T), reject, timer });
+      this.pending.set(id, { resolve: value => resolve(value as T), reject, timer, type, requestBytes:Buffer.byteLength(message), started:performance.now() });
       this.socket!.send(message, error => { if (error) { clearTimeout(timer); this.pending.delete(id); reject(error); } });
     });
   }

@@ -1,4 +1,4 @@
-local root=app.fs.joinPath(app.fs.filePath(app.scriptPath),"..","..")
+local root=app.fs.currentPath
 local state=dofile(app.fs.joinPath(root,"plugin","state.lua"))
 
 local function fails(code,fn)
@@ -29,8 +29,10 @@ end
 -- Supported matrix: exact crop/mask, translated and absent cels, stable state.
 for _,size in ipairs{16,32,64} do for _,mode in ipairs{ColorMode.INDEXED,ColorMode.RGB} do
   local sprite,layer=spriteWithCel(size,mode)
-  sprite.selection:select(Rectangle(3,4,2,2)); sprite.selection:deselect(Rectangle(4,5,1,1))
+  sprite.selection:select(Rectangle(3,4,2,2)); sprite.selection:subtract(Rectangle(4,5,1,1))
   local a,b=state.read(),state.read()
+  local metadata=state.read(false)
+  assert(metadata.token==a.token and metadata.crop==nil)
   assert(a.token==b.token and a.width==size and a.height==size)
   assert(a.colorMode==(mode==ColorMode.INDEXED and "indexed" or "rgb"))
   assert(a.frame==1 and a.activeLayerUuid==tostring(layer.uuid))
@@ -42,6 +44,17 @@ for _,size in ipairs{16,32,64} do for _,mode in ipairs{ColorMode.INDEXED,ColorMo
   sprite:deleteCel(layer:cel(1)); assert(state.read().crop.paletteRefs[1]==-1)
   close(sprite)
 end end
+
+-- Indexed sprite with an RGB cel uses the cel's effective pixel format.
+do
+  local sprite=Sprite(16,16,ColorMode.INDEXED); palette(sprite); local layer=sprite.layers[1]
+  local image=Image(2,2,ColorMode.RGB); image:drawPixel(0,0,pixel(ColorMode.RGB,1))
+  sprite:newCel(layer,1,image,Point(2,3)); app.activeLayer=layer; app.activeFrame=sprite.frames[1]
+  sprite.selection:select(Rectangle(2,3,1,1))
+  local snapshot=state.read()
+  assert(snapshot.colorMode=="indexed" and snapshot.activeCelColorMode=="rgb" and snapshot.crop.paletteRefs[1]==1)
+  close(sprite)
+end
 
 -- Every authorizing state component changes the token.
 do
@@ -87,16 +100,33 @@ end
 do
   local path=app.fs.joinPath(root,"plugin","main.lua")
   local file=assert(io.open(path,"r")); local source=file:read("*a"); file:close()
-  source=assert(source:gsub("local state,apply,ws,pluginRef","local state,apply,ws,pluginRef=...",1)).."\nreturn dispatch"
-  local sent,reads,applies
-  local sender={sendText=function(_,message) sent=json.decode(message) end}
-  local dispatch=assert(load(source,"@"..path))({read=function() reads=(reads or 0)+1; return {token="test"} end},{apply=function() applies=(applies or 0)+1; return {applied=0} end},sender)
-  dispatch('{"version":"1.0","id":"snapshot","type":"read_snapshot"}')
+  source=assert(source:gsub("local state,apply,ws,pluginRef,statusDialog","local state,apply,ws,pluginRef,statusDialog=...",1))
+  source=assert(source:gsub("local paired,processing,exiting=false,false,false","local paired,processing,exiting=true,false,false",1)).."\nreturn dispatch,setPaired,setProcessing,activityText,disconnect"
+  local sent,reads,applies,closed
+  local sender={sendText=function(_,message) sent=json.decode(message) end,close=function() closed=true end}
+  local visible={}
+  local status={repaint=function() end,modify=function(_,options) if options.visible~=nil then visible[options.id]=options.visible end end}
+  local dispatch,setPaired,setProcessing,activityText,disconnect=assert(load(source,"@"..path))({read=function() reads=(reads or 0)+1; return {token="test"} end},{apply=function() applies=(applies or 0)+1; return {applied=0} end},sender,nil,status)
+  setPaired(false); local activities={activityText()}
+  assert(visible.port and visible.nonce and visible.connect and visible.disconnect==false)
+  setPaired(true); activities[#activities+1]=activityText()
+  assert(visible.port==false and visible.nonce==false and visible.connect==false and visible.disconnect)
+  setProcessing(true); activities[#activities+1]=activityText()
+  setProcessing(false); activities[#activities+1]=activityText()
+  assert(table.concat(activities,"|")=="Unavailable|Ready|Processing...|Ready")
+  dispatch('{"version":"1.0","id":"snapshot","type":"read_snapshot","payload":{"includeCrop":false}}')
   assert(reads==1 and sent.id=="snapshot" and sent.ok and sent.payload.token=="test")
   dispatch('{"version":"1.0","id":"apply","type":"apply_diff","payload":{"diff":{}}}')
   assert(applies==1 and sent.id=="apply" and sent.ok)
+  dispatch('{"version":"1.0","id":"processing","type":"set_processing","payload":{"processing":true}}')
+  assert(sent.id=="processing" and sent.ok and sent.payload.processing==true)
+  dispatch('{"version":"1.0","id":"idle","type":"set_processing","payload":{"processing":false}}')
+  assert(sent.id=="idle" and sent.ok and sent.payload.processing==false)
   dispatch('{"version":"1.0","id":"invalid","type":"apply_diff","payload":1}')
   assert(applies==1 and sent.id=="invalid" and not sent.ok and sent.error.code=="invalid_message")
+  disconnect()
+  assert(closed and activityText()=="Unavailable")
+  assert(visible.port and visible.nonce and visible.connect and visible.disconnect==false)
 end
 
 print("read-state ok: Aseprite "..tostring(app.version)..(app.params.multiplePalette and " +multi-palette" or ""))

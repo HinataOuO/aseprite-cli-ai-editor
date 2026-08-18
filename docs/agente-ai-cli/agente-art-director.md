@@ -32,6 +32,14 @@ Una descrizione strutturata attesa contenente, quando pertinenti:
 
 Il formato definitivo appartiene al [[../protocollo-dati/README|Protocollo Dati]].
 
+## Profilo e precedenza
+
+`ArtDirectionProfile` è compilato una volta per generazione e contiene `nativeSprite`, `pixelStyle`, `rendering`, ruoli palette espressi come indici reali, `character`, `pose`, `preserve`, vincoli negativi e priorità. Ogni regola osservata registra valore, evidenza, confidenza e origine; una misura euristica non viene presentata come requisito certo.
+
+Precedenza: vincoli tecnici del documento e della maschera → intento esplicito → stile osservato nel crop → default dipendente dalla risoluzione. Il compilatore elimina istruzioni incompatibili, per esempio outline continua e selettiva.
+
+L'analisi usa bounding box opaca, frequenze e luminosità palette, colori sul bordo trasparente, componenti connesse e densità. Le risoluzioni 16/32/64 applicano budget di dettaglio distinti; una figura fino a circa 48 px dentro un canvas 64×64 conserva il budget 48 px invece di acquisire dettaglio automaticamente.
+
 ## Dipendenze
 
 - contesto raccolto dall'[[README|Agente Ai Cli]];
@@ -43,7 +51,8 @@ Il formato definitivo appartiene al [[../protocollo-dati/README|Protocollo Dati]
 - decidere autonomamente requisiti artistici ambigui con impatto rilevante;
 - eseguire operazioni in Aseprite;
 - stabilire il trasporto o lo schema definitivo;
-- produrre Lua arbitrario.
+- produrre Lua arbitrario;
+- chiedere raster o PNG al provider: l'output generativo è sempre un `Candidate` JSON row-major.
 
 ## Decisioni aperte
 

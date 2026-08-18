@@ -1,22 +1,55 @@
 local state,apply,ws,pluginRef,statusDialog
-local paired,exiting=false,false
+local paired,processing,exiting=false,false,false
+local connect,disconnect
+
+local function activityText()
+  if not paired then return "Unavailable" end
+  return processing and "Processing..." or "Ready"
+end
+
+local function redrawStatus()
+  if not statusDialog then return end
+  for _,id in ipairs{"port","nonce","connect"} do statusDialog:modify{id=id,visible=not paired} end
+  statusDialog:modify{id="disconnect",visible=paired}
+  statusDialog:repaint()
+end
 
 local function setPaired(value)
   paired=value
-  if statusDialog then statusDialog:repaint() end
+  redrawStatus()
+end
+
+local function setProcessing(value)
+  processing=value
+  redrawStatus()
+end
+
+local function setConnectionError(message)
+  if statusDialog then statusDialog:modify{id="error",text=message and "Error: "..message or ""} end
 end
 
 local function showStatus()
   if statusDialog then statusDialog:show{wait=false}; return end
   local dialog
   dialog=Dialog{title="AI Editor",onclose=function() if statusDialog==dialog then statusDialog=nil end end}
-  dialog:canvas{id="status",width=28,height=28,onpaint=function(ev)
+  dialog:canvas{id="status",width=360,height=28,onpaint=function(ev)
     local gc=ev.context
     gc.color=paired and Color{r=35,g=170,b=70} or Color{r=210,g=45,b=45}
     gc:beginPath(); gc:oval(Rectangle(7,7,14,14)); gc:fill()
+    gc.color=app.theme.color.text
+    local connection="CLI: "..(paired and "Connected" or "Disconnected")
+    gc:fillText(connection,30,6)
+    gc:fillText("Activity: "..activityText(),42+gc:measureText(connection).width,6)
   end}
+  dialog:separator{}
+  dialog:entry{id="port",label="Port",text=tostring(pluginRef.preferences.port or 32123)}
+  dialog:entry{id="nonce",label="Pairing nonce",text=""}
+  dialog:button{id="connect",text="Connect",onclick=function() connect() end}
+  dialog:button{id="disconnect",text="Disconnect",visible=false,onclick=function() disconnect() end}
+  dialog:label{id="error",text=""}
   statusDialog=dialog
   dialog:show{wait=false}
+  redrawStatus()
 end
 
 local function send(message) if ws and paired then ws:sendText(json.encode(message)) end end
@@ -65,12 +98,19 @@ local function dispatch(raw,socket)
   local ok,msg=pcall(json.decode,raw)
   if not ok or not isObject(msg) or msg.version~="1.0" or type(msg.id)~="string" then return end
   if msg.ok~=nil then
-    if msg.id=="pair" and ws==socket then setPaired(msg.ok==true) end
+    if msg.id=="pair" and ws==socket then
+      if msg.ok==true then setPaired(true); setConnectionError(nil)
+      else setPaired(false); setConnectionError("Pairing rejected.") end
+    end
     return
   end
   if msg.type=="read_snapshot" then
-    local success,result=pcall(state.read); response(msg.id,success,success and result or nil,success and nil or result)
+    local includeCrop=not isObject(msg.payload) or msg.payload.includeCrop~=false
+    local success,result=pcall(state.read,includeCrop); response(msg.id,success,success and result or nil,success and nil or result)
   elseif not isObject(msg.payload) then response(msg.id,false,nil,"invalid_message: payload")
+  elseif msg.type=="set_processing" then
+    if type(msg.payload.processing)~="boolean" then response(msg.id,false,nil,"invalid_message: processing")
+    else setProcessing(msg.payload.processing); response(msg.id,true,{processing=processing}) end
   elseif msg.type=="confirm_mask" then
     local success,result=pcall(confirmMask,msg.id,msg.payload.mask); if not success then response(msg.id,false,nil,result) end
   elseif msg.type=="apply_diff" then
@@ -78,43 +118,55 @@ local function dispatch(raw,socket)
   else response(msg.id,false,nil,"invalid_message: unknown method") end
 end
 
-local function connect()
-  setPaired(false)
-  if ws then ws:close(); ws=nil end
-  local prefs=pluginRef.preferences
-  local dialog=Dialog{title="Connect CLI AI Editor"}
-  dialog:entry{id="port",label="Port",text=tostring(prefs.port or 32123)}
-  dialog:entry{id="nonce",label="Pairing nonce",text=""}
-  dialog:button{text="Connect",onclick=function()
-    local data=dialog.data; prefs.port=tonumber(data.port); dialog:close()
-    local socket
-    socket=WebSocket{url="ws://127.0.0.1:"..prefs.port,onreceive=function(kind,payload)
+connect=function()
+  local dialog=statusDialog
+  if not dialog then showStatus(); return end
+  local data=dialog.data
+  local portText=tostring(data.port or "")
+  local port=portText:match("^%d+$") and tonumber(portText)
+  if not port or port<1 or port>65535 then setConnectionError("Port must be an integer from 1 to 65535."); return end
+  local nonce=tostring(data.nonce or "")
+  if nonce:match("^%s*$") then setConnectionError("Pairing nonce is required."); return end
+
+  pluginRef.preferences.port=port
+  dialog:modify{id="nonce",text=""}
+  setConnectionError(nil); setPaired(false); setProcessing(false)
+  if ws then local socket=ws; ws=nil; socket:close() end
+  local socket
+  local ok,err=pcall(function()
+    socket=WebSocket{url="ws://127.0.0.1:"..port,onreceive=function(kind,payload)
       if exiting then return end
       if kind==WebSocketMessageType.OPEN then
         if ws==socket then
-          setPaired(false)
-          socket:sendText(json.encode{version="1.0",id="pair",type="pair",payload={nonce=data.nonce,capabilities={asepriteVersion=tostring(app.version),protocolVersion="1.0",methods={"read_snapshot","confirm_mask","apply_diff"}}}})
+          socket:sendText(json.encode{version="1.0",id="pair",type="pair",payload={nonce=nonce,capabilities={asepriteVersion=tostring(app.version),protocolVersion="1.0",methods={"read_snapshot","confirm_mask","apply_diff"}}}})
         end
       elseif kind==WebSocketMessageType.TEXT and ws==socket then dispatch(payload,socket)
-      elseif kind==WebSocketMessageType.CLOSE and ws==socket then setPaired(false) end
+      elseif kind==WebSocketMessageType.CLOSE and ws==socket then
+        ws=nil; setPaired(false); setProcessing(false); setConnectionError("Connection closed or pairing rejected.")
+      end
     end,deflate=false,minreconnectwait=1,maxreconnectwait=3}
     ws=socket; socket:connect()
-  end}
-  dialog:button{text="Cancel"}
-  dialog:show()
+  end)
+  if not ok then ws=nil; setConnectionError(tostring(err)) end
+end
+
+disconnect=function()
+  local socket=ws; ws=nil
+  if socket then socket:close() end
+  setPaired(false); setProcessing(false); setConnectionError(nil)
 end
 
 function init(plugin)
   pluginRef=plugin; exiting=false; setPaired(false)
   state=dofile(plugin.path.."/state.lua")
   apply=dofile(plugin.path.."/apply.lua"); apply.configure(state)
-  plugin:newCommand{id="AsepriteCliAiConnect",title="Connect CLI AI Editor",group="file_scripts",onclick=connect}
+  plugin:newCommand{id="AsepriteCliAiConnect",title="Connect CLI AI Editor",group="file_scripts",onclick=showStatus}
   plugin:newCommand{id="AsepriteCliAiStatus",title="Show AI Editor Status",group="file_scripts",onclick=showStatus}
   showStatus()
 end
 
 function exit(plugin)
-  exiting=true; paired=false
+  exiting=true; setPaired(false); setProcessing(false)
   if statusDialog then local dialog=statusDialog; statusDialog=nil; dialog:close() end
   if ws then local socket=ws; ws=nil; socket:close() end
 end

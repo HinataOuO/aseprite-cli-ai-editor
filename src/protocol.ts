@@ -1,6 +1,7 @@
 export const PROTOCOL_VERSION = "1.0" as const;
 export const MAX_PAYLOAD_BYTES = 1024 * 1024;
 export const SUPPORTED_SIZES = [16, 32, 64] as const;
+export const MAX_DIFF_PIXELS = 4096;
 export const TRANSPARENT = -1 as const;
 
 export type ColorMode = "indexed" | "rgb";
@@ -23,6 +24,7 @@ export interface Snapshot {
   layers: LayerState[];
   palette: PaletteEntry[];
   transparentIndex?: number;
+  activeCelColorMode?: ColorMode;
   selection?: Mask;
   crop?: { bounds: Rect; pngBase64?: string; paletteRefs?: number[] };
 }
@@ -41,7 +43,8 @@ export interface EditSpec {
 }
 export interface Candidate { snapshotToken: string; bounds: Rect; paletteRefs: number[] }
 export interface PixelChange { x: number; y: number; paletteRef: number }
-export interface PixelDiff { snapshotToken: string; spriteId: number; frame: number; layerUuid: string; changes: PixelChange[] }
+export interface PixelSpan { x: number; y: number; length: number; paletteRef: number }
+export interface PixelDiff { snapshotToken: string; spriteId: number; frame: number; layerUuid: string; changes: PixelChange[]; spans?: PixelSpan[]; createLayer?: boolean }
 
 export class ProtocolValidationError extends Error {
   constructor(public readonly error: ProtocolError) { super(error.message); }
@@ -130,6 +133,10 @@ export function validateSnapshot(value: unknown): Snapshot {
     colorMode, frame: integer(v.frame, "frame", 1), activeLayerUuid: text(v.activeLayerUuid, "activeLayerUuid"), layers, palette
   };
   if (v.transparentIndex !== undefined) snapshot.transparentIndex = integer(v.transparentIndex, "transparentIndex");
+  if (v.activeCelColorMode !== undefined) {
+    if (v.activeCelColorMode !== "indexed" && v.activeCelColorMode !== "rgb") fail("unsupported cel color mode", "unsupported_document");
+    snapshot.activeCelColorMode = v.activeCelColorMode as ColorMode;
+  }
   if (v.selection !== undefined) snapshot.selection = validateMask(v.selection);
   if (v.crop !== undefined) {
     const crop = object(v.crop, "crop");
@@ -145,4 +152,21 @@ export function validateCandidate(value: unknown): Candidate {
   const bounds = validateRect(v.bounds, "candidate.bounds");
   if (!Array.isArray(v.paletteRefs) || v.paletteRefs.length !== bounds.width * bounds.height || v.paletteRefs.some(x => !Number.isInteger(x) || x < TRANSPARENT)) fail("candidate paletteRefs do not match bounds");
   return { snapshotToken: text(v.snapshotToken, "snapshotToken"), bounds, paletteRefs: v.paletteRefs as number[] };
+}
+
+export function validatePixelDiff(value: unknown): PixelDiff {
+  const v=object(value,"diff");
+  if (v.changes===undefined && v.spans===undefined) fail("diff requires changes or spans");
+  if (v.changes!==undefined && !Array.isArray(v.changes)) fail("diff.changes must be an array");
+  if (v.spans!==undefined && !Array.isArray(v.spans)) fail("diff.spans must be an array");
+  const changes=(v.changes as unknown[]|undefined)?.map((item,i)=>{
+    const change=object(item,`diff.changes[${i}]`);
+    return {x:integer(change.x,`diff.changes[${i}].x`),y:integer(change.y,`diff.changes[${i}].y`),paletteRef:integer(change.paletteRef,`diff.changes[${i}].paletteRef`,TRANSPARENT)};
+  });
+  const spans=(v.spans as unknown[]|undefined)?.map((item,i)=>{
+    const span=object(item,`diff.spans[${i}]`);
+    return {x:integer(span.x,`diff.spans[${i}].x`),y:integer(span.y,`diff.spans[${i}].y`),length:integer(span.length,`diff.spans[${i}].length`,1),paletteRef:integer(span.paletteRef,`diff.spans[${i}].paletteRef`,TRANSPARENT)};
+  });
+  if ((changes?.length ?? 0)+(spans?.reduce((total,span)=>total+span.length,0) ?? 0)>MAX_DIFF_PIXELS) fail(`diff exceeds ${MAX_DIFF_PIXELS} expanded pixels`);
+  return {snapshotToken:text(v.snapshotToken,"diff.snapshotToken"),spriteId:integer(v.spriteId,"diff.spriteId"),frame:integer(v.frame,"diff.frame",1),layerUuid:text(v.layerUuid,"diff.layerUuid"),changes:changes ?? [],...(spans?{spans}:{}),...(v.createLayer===true?{createLayer:true}:{})};
 }

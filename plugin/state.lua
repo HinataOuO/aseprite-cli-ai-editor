@@ -42,11 +42,12 @@ local function sha256(s)
   local out=''; for i=1,8 do out=out..string.format('%08x',h[i]) end; return out
 end
 
-local function mode(sprite)
-  if sprite.colorMode == ColorMode.INDEXED then return "indexed" end
-  if sprite.colorMode == ColorMode.RGB then return "rgb" end
+local function colorMode(value)
+  if value == ColorMode.INDEXED then return "indexed" end
+  if value == ColorMode.RGB then return "rgb" end
   error("unsupported_document: grayscale")
 end
+local function mode(sprite) return colorMode(sprite.colorMode) end
 
 local function validate(sprite, layer)
   if sprite.width ~= sprite.height or (sprite.width ~= 16 and sprite.width ~= 32 and sprite.width ~= 64) then error("unsupported_document: dimensions") end
@@ -76,8 +77,9 @@ local function pixels(sprite, cel, bounds, colorRefs)
       local ix,iy=x-cel.position.x,y-cel.position.y
       if ix>=0 and iy>=0 and ix<cel.image.width and iy<cel.image.height then
         local pixel=cel.image:getPixel(ix,iy)
-        if sprite.colorMode==ColorMode.INDEXED then value=pixel==sprite.spec.transparentColor and -1 or pixel
-        else value=colorRefs[pixel]; if value==nil then error("unsupported_document: RGB pixel outside palette") end end
+        if cel.image.colorMode==ColorMode.INDEXED then value=pixel==sprite.spec.transparentColor and -1 or pixel
+        elseif cel.image.colorMode==ColorMode.RGB then value=colorRefs[pixel]; if value==nil then error("unsupported_document: RGB pixel outside palette") end
+        else error("unsupported_document: cel color mode") end
       end
     end
     values[#values+1]=value
@@ -85,7 +87,7 @@ local function pixels(sprite, cel, bounds, colorRefs)
   return values
 end
 
-function M.read()
+function M.read(includeCrop)
   local sprite,layer,frame=app.activeSprite,app.activeLayer,app.activeFrame
   if not sprite or not frame then error("unsupported_document: no active sprite") end
   validate(sprite,layer)
@@ -99,13 +101,15 @@ function M.read()
     colorRefs[c.rgbaPixel]=c.alpha==0 and -1 or i
   end
   local rawPixels=pixels(sprite,cel,bounds,colorRefs)
-  local basis=json.encode({sprite.id,sprite.width,sprite.height,mode(sprite),frame.frameNumber,tostring(layer.uuid),cel and cel.image.id or 0,cel and cel.image.version or 0,palette,selection or false,rawPixels})
-  return {
+  local celMode=cel and colorMode(cel.image.colorMode) or nil
+  local basis=json.encode({sprite.id,sprite.width,sprite.height,mode(sprite),frame.frameNumber,tostring(layer.uuid),cel and cel.image.id or 0,cel and cel.image.version or 0,celMode or false,palette,selection or false,rawPixels})
+  local result={
     token=sha256(basis), spriteId=sprite.id, width=sprite.width, height=sprite.height, colorMode=mode(sprite), frame=frame.frameNumber,
     activeLayerUuid=tostring(layer.uuid), layers={{uuid=tostring(layer.uuid),imageId=cel and cel.image.id or nil,imageVersion=cel and cel.image.version or nil,editable=layer.isEditable}},
-    palette=palette, transparentIndex=sprite.spec.transparentColor, selection=selection,
-    crop={bounds=bounds,paletteRefs=rawPixels}
+    palette=palette, transparentIndex=sprite.spec.transparentColor, activeCelColorMode=celMode, selection=selection
   }
+  if includeCrop~=false then result.crop={bounds=bounds,paletteRefs=rawPixels} end
+  return result
 end
 
 function M.maskFromSelection(sprite) return maskFromSelection(sprite) end

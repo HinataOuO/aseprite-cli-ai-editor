@@ -1,0 +1,14 @@
+{
+  "description": "Blue-haired pixel character reference: navy selective outline, hard clusters, extended pose",
+  "palette": [
+    { "index": 2, "rgba": 118829055 },
+    { "index": 5, "rgba": 389769727 },
+    { "index": 8, "rgba": 1334829055 },
+    { "index": 9, "rgba": 2849566719 }
+  ],
+  "variants": [
+    { "canvas": 32, "nativeFigure": 32, "shadesPerMaterial": 2 },
+    { "canvas": 64, "nativeFigure": 48, "shadesPerMaterial": 3 }
+  ],
+  "intent": "blue-haired character in an extended dynamic pose"
+}
