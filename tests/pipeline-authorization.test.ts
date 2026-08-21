@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildSpec } from "../src/pipeline.js";
+import { buildSpec,candidateDiff,hashCandidate } from "../src/pipeline.js";
 import type { Snapshot } from "../src/protocol.js";
 
 const mask={bounds:{x:0,y:0,width:2,height:2},bits:"Dw=="};
@@ -17,3 +17,16 @@ test("multi-layer requires explicit confirmation",()=>{
   assert.throws(()=>buildSpec(snapshot,"arm",{layerUuids:["a","missing"],confirmed:true}),/unauthorized_change/);
 });
 
+test("candidate conversion cannot alter pixels outside mask",()=>{
+  const sparse={...snapshot,palette:[...snapshot.palette,{index:1,rgba:0xff0000ff}],selection:{...mask,bits:"BQ=="},crop:{bounds:mask.bounds,paletteRefs:[0,0,0,0]}};
+  const candidate={snapshotToken:"t",bounds:mask.bounds,paletteRefs:[1,0,1,0]};
+  const diff=candidateDiff(candidate,sparse,buildSpec(sparse,"paint"));
+  assert.deepEqual(diff.changes.map(({x,y})=>[x,y]),[[0,0],[0,1]]);
+});
+
+test("candidate palette participates in hash and diff",()=>{
+  const spec=buildSpec(snapshot,"palette");
+  const first={snapshotToken:snapshot.token,bounds:spec.mask.bounds,paletteRefs:[1,1,1,1],palette:[{index:0,rgba:0},{index:1,rgba:0xff0000ff}]};
+  const second={...first,palette:[{index:0,rgba:0},{index:1,rgba:0x00ff00ff}]};
+  assert.notEqual(hashCandidate(first),hashCandidate(second));assert.deepEqual(candidateDiff(first,snapshot,spec).palette,first.palette);
+});

@@ -50,10 +50,37 @@ end
 local function mode(sprite) return colorMode(sprite.colorMode) end
 
 local function validate(sprite, layer)
-  if sprite.width ~= sprite.height or (sprite.width ~= 16 and sprite.width ~= 32 and sprite.width ~= 64) then error("unsupported_document: dimensions") end
+  if sprite.width<1 or sprite.height<1 or sprite.width>128 or sprite.height>128 or sprite.width*sprite.height>16384 then error("unsupported_document: dimensions") end
   mode(sprite)
   if #sprite.palettes ~= 1 then error("unsupported_document: multiple palettes") end
   if not layer or not layer.isImage or layer.isTilemap or layer.isReference or not layer.isEditable then error("unsupported_document: layer") end
+end
+
+local function imageLayers(layers, result)
+  result=result or {}
+  for _,layer in ipairs(layers) do
+    if layer.isGroup then imageLayers(layer.layers,result)
+    elseif layer.isImage then result[#result+1]=layer end
+  end
+  return result
+end
+
+local function usedRgba(sprite)
+  local used={}
+  for _,layer in ipairs(imageLayers(sprite.layers)) do for _,cel in ipairs(layer.cels) do
+    local image=cel.image
+    for y=0,image.height-1 do for x=0,image.width-1 do
+      local pixel=image:getPixel(x,y)
+      if image.colorMode==ColorMode.INDEXED then
+        local color=sprite.palettes[1]:getColor(pixel)
+        if color.alpha>0 then used[((color.red*256+color.green)*256+color.blue)*256+color.alpha]=true end
+      elseif image.colorMode==ColorMode.RGB then
+        local alpha=app.pixelColor.rgbaA(pixel)
+        if alpha>0 then used[((app.pixelColor.rgbaR(pixel)*256+app.pixelColor.rgbaG(pixel))*256+app.pixelColor.rgbaB(pixel))*256+alpha]=true end
+      else error("unsupported_document: cel color mode") end
+    end end
+  end end
+  local result={}; for color in pairs(used) do result[#result+1]=color end; table.sort(result); return result
 end
 
 local function maskFromSelection(sprite)
@@ -78,7 +105,9 @@ local function pixels(sprite, cel, bounds, colorRefs)
       if ix>=0 and iy>=0 and ix<cel.image.width and iy<cel.image.height then
         local pixel=cel.image:getPixel(ix,iy)
         if cel.image.colorMode==ColorMode.INDEXED then value=pixel==sprite.spec.transparentColor and -1 or pixel
-        elseif cel.image.colorMode==ColorMode.RGB then value=colorRefs[pixel]; if value==nil then error("unsupported_document: RGB pixel outside palette") end
+        elseif cel.image.colorMode==ColorMode.RGB then
+          if pixel==app.pixelColor.rgba(0,0,0,0) then value=-1
+          else value=colorRefs[pixel]; if value==nil then error("unsupported_document: RGB pixel outside palette") end end
         else error("unsupported_document: cel color mode") end
       end
     end
@@ -101,12 +130,18 @@ function M.read(includeCrop)
     colorRefs[c.rgbaPixel]=c.alpha==0 and -1 or i
   end
   local rawPixels=pixels(sprite,cel,bounds,colorRefs)
+  local layers={}
+  for _,candidate in ipairs(imageLayers(sprite.layers)) do
+    local candidateCel=candidate:cel(frame)
+    layers[#layers+1]={uuid=tostring(candidate.uuid),imageId=candidateCel and candidateCel.image.id or nil,imageVersion=candidateCel and candidateCel.image.version or nil,editable=candidate.isEditable}
+  end
+  local used=usedRgba(sprite); local empty=#used==0
   local celMode=cel and colorMode(cel.image.colorMode) or nil
-  local basis=json.encode({sprite.id,sprite.width,sprite.height,mode(sprite),frame.frameNumber,tostring(layer.uuid),cel and cel.image.id or 0,cel and cel.image.version or 0,celMode or false,palette,selection or false,rawPixels})
+  local basis=json.encode({sprite.id,sprite.width,sprite.height,mode(sprite),frame.frameNumber,tostring(layer.uuid),layers,celMode or false,palette,selection or false,rawPixels,empty,used})
   local result={
     token=sha256(basis), spriteId=sprite.id, width=sprite.width, height=sprite.height, colorMode=mode(sprite), frame=frame.frameNumber,
-    activeLayerUuid=tostring(layer.uuid), layers={{uuid=tostring(layer.uuid),imageId=cel and cel.image.id or nil,imageVersion=cel and cel.image.version or nil,editable=layer.isEditable}},
-    palette=palette, transparentIndex=sprite.spec.transparentColor, activeCelColorMode=celMode, selection=selection
+    activeLayerUuid=tostring(layer.uuid), layers=layers,
+    palette=palette, transparentIndex=sprite.spec.transparentColor, activeCelColorMode=celMode, documentEmpty=empty, usedRgba=used, selection=selection
   }
   if includeCrop~=false then result.crop={bounds=bounds,paletteRefs=rawPixels} end
   return result

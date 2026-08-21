@@ -17,30 +17,32 @@ local function pixel(mode,ref)
   if ref==-1 then return app.pixelColor.rgba(0,0,0,0) end
   return ref==1 and app.pixelColor.rgba(255,0,0,255) or app.pixelColor.rgba(0,255,0,255)
 end
-local function spriteWithCel(size,mode,position)
-  local sprite=Sprite(size,size,mode); palette(sprite)
+local function rectSpriteWithCel(width,height,mode,position)
+  local sprite=Sprite(width,height,mode); palette(sprite)
   local layer=sprite.layers[1]
   local image=Image(4,4,mode); image:drawPixel(0,0,pixel(mode,1))
-  sprite:newCel(layer,1,image,position or Point(3,4))
+  layer:cel(1).image=image; layer:cel(1).position=position or Point(3,4)
   app.activeLayer=layer; app.activeFrame=sprite.frames[1]
   return sprite,layer
 end
+local function spriteWithCel(size,mode,position) return rectSpriteWithCel(size,size,mode,position) end
 
 -- Supported matrix: exact crop/mask, translated and absent cels, stable state.
-for _,size in ipairs{16,32,64} do for _,mode in ipairs{ColorMode.INDEXED,ColorMode.RGB} do
-  local sprite,layer=spriteWithCel(size,mode)
+for _,dimensions in ipairs{{16,16},{32,32},{64,64},{128,128},{72,48}} do for _,mode in ipairs{ColorMode.INDEXED,ColorMode.RGB} do
+  local width,height=dimensions[1],dimensions[2]
+  local sprite,layer=rectSpriteWithCel(width,height,mode)
   sprite.selection:select(Rectangle(3,4,2,2)); sprite.selection:subtract(Rectangle(4,5,1,1))
   local a,b=state.read(),state.read()
   local metadata=state.read(false)
   assert(metadata.token==a.token and metadata.crop==nil)
-  assert(a.token==b.token and a.width==size and a.height==size)
+  assert(a.token==b.token and a.width==width and a.height==height)
   assert(a.colorMode==(mode==ColorMode.INDEXED and "indexed" or "rgb"))
   assert(a.frame==1 and a.activeLayerUuid==tostring(layer.uuid))
   assert(a.selection.bits=="Bw==" and a.selection.bounds.x==3 and a.selection.bounds.y==4)
   assert(a.crop.bounds.x==3 and a.crop.bounds.y==4 and a.crop.bounds.width==2 and a.crop.bounds.height==2)
   assert(#a.crop.paletteRefs==4 and a.crop.paletteRefs[1]==1 and a.crop.paletteRefs[4]==-1)
   sprite.selection:deselect(); local full=state.read()
-  assert(full.selection==nil and full.crop.bounds.x==0 and full.crop.bounds.width==size)
+  assert(full.selection==nil and full.crop.bounds.x==0 and full.crop.bounds.width==width and full.crop.bounds.height==height)
   sprite:deleteCel(layer:cel(1)); assert(state.read().crop.paletteRefs[1]==-1)
   close(sprite)
 end end
@@ -69,8 +71,21 @@ do
   close(sprite)
 end
 
+-- Empty status scans hidden layers and every frame, not only active cel.
+do
+  local sprite=Sprite(16,16,ColorMode.INDEXED); palette(sprite); local active=sprite.layers[1]
+  active:cel(1).image=Image(16,16,ColorMode.INDEXED); app.activeLayer=active
+  assert(state.read(false).documentEmpty and #state.read(false).usedRgba==0)
+  local hidden=sprite:newLayer(); hidden.isVisible=false; sprite:newEmptyFrame(2)
+  local image=Image(1,1,ColorMode.INDEXED); image:drawPixel(0,0,1); sprite:newCel(hidden,2,image,Point(0,0))
+  app.activeLayer=active; app.activeFrame=sprite.frames[1]
+  local snapshot=state.read(false)
+  assert(not snapshot.documentEmpty and #snapshot.layers==2 and #snapshot.usedRgba==1 and snapshot.usedRgba[1]==0xff0000ff)
+  close(sprite)
+end
+
 -- Unsupported documents are rejected before mutation.
-for _,spec in ipairs{{15,15,ColorMode.INDEXED},{16,32,ColorMode.INDEXED},{16,16,ColorMode.GRAY}} do
+for _,spec in ipairs{{129,16,ColorMode.INDEXED},{16,129,ColorMode.INDEXED},{16,16,ColorMode.GRAY}} do
   local sprite=Sprite(spec[1],spec[2],spec[3]); local before=sprite.width..":"..sprite.height
   fails("unsupported_document",state.read); assert(sprite.width..":"..sprite.height==before); close(sprite)
 end

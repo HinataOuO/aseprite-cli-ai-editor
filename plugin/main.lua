@@ -1,5 +1,7 @@
 local state,apply,ws,pluginRef,statusDialog
+local importer
 local paired,processing,exiting=false,false,false
+local connecting=false
 local connect,disconnect
 
 local function activityText()
@@ -99,6 +101,7 @@ local function dispatch(raw,socket)
   if not ok or not isObject(msg) or msg.version~="1.0" or type(msg.id)~="string" then return end
   if msg.ok~=nil then
     if msg.id=="pair" and ws==socket then
+      connecting=false
       if msg.ok==true then setPaired(true); setConnectionError(nil)
       else setPaired(false); setConnectionError("Pairing rejected.") end
     end
@@ -121,6 +124,7 @@ end
 connect=function()
   local dialog=statusDialog
   if not dialog then showStatus(); return end
+  if connecting then return end
   local data=dialog.data
   local portText=tostring(data.port or "")
   local port=portText:match("^%d+$") and tonumber(portText)
@@ -132,41 +136,70 @@ connect=function()
   dialog:modify{id="nonce",text=""}
   setConnectionError(nil); setPaired(false); setProcessing(false)
   if ws then local socket=ws; ws=nil; socket:close() end
+  connecting=true
   local socket
   local ok,err=pcall(function()
     socket=WebSocket{url="ws://127.0.0.1:"..port,onreceive=function(kind,payload)
       if exiting then return end
       if kind==WebSocketMessageType.OPEN then
         if ws==socket then
-          socket:sendText(json.encode{version="1.0",id="pair",type="pair",payload={nonce=nonce,capabilities={asepriteVersion=tostring(app.version),protocolVersion="1.0",methods={"read_snapshot","confirm_mask","apply_diff"}}}})
+          local sent,sendErr=pcall(function()
+            socket:sendText(json.encode{version="1.0",id="pair",type="pair",payload={nonce=nonce,capabilities={asepriteVersion=tostring(app.version),protocolVersion="1.0",methods={"read_snapshot","confirm_mask","apply_diff"}}}})
+          end)
+          if not sent and ws==socket then
+            ws=nil; connecting=false; pcall(function() socket:close() end)
+            setPaired(false); setProcessing(false); setConnectionError(tostring(sendErr))
+          end
         end
-      elseif kind==WebSocketMessageType.TEXT and ws==socket then dispatch(payload,socket)
+      elseif kind==WebSocketMessageType.TEXT and ws==socket then
+        dispatch(payload,socket)
       elseif kind==WebSocketMessageType.CLOSE and ws==socket then
-        ws=nil; setPaired(false); setProcessing(false); setConnectionError("Connection closed or pairing rejected.")
+        ws=nil; connecting=false; pcall(function() socket:close() end)
+        setPaired(false); setProcessing(false); setConnectionError("Connection closed or pairing rejected.")
       end
     end,deflate=false,minreconnectwait=1,maxreconnectwait=3}
     ws=socket; socket:connect()
   end)
-  if not ok then ws=nil; setConnectionError(tostring(err)) end
+  if not ok then
+    if ws==socket then ws=nil end
+    connecting=false; if socket then pcall(function() socket:close() end) end
+    setConnectionError(tostring(err))
+  end
 end
 
 disconnect=function()
-  local socket=ws; ws=nil
+  local socket=ws; ws=nil; connecting=false
   if socket then socket:close() end
   setPaired(false); setProcessing(false); setConnectionError(nil)
 end
 
+local function showImport()
+  local dialog=Dialog{title="Import Pixel Pipeline JSON"}
+  dialog:file{id="input",label="JSON file",open=true,filetypes={"json"}}
+  dialog:button{text="Import",focus=true,onclick=function()
+    local path=dialog.data.input
+    if not path or path=="" then return end
+    dialog:close()
+    local ok,err=pcall(importer.import,path)
+    if not ok then app.alert{title="Import failed",text=tostring(err)} end
+  end}
+  dialog:button{text="Cancel",onclick=function() dialog:close() end}
+  dialog:show{wait=false}
+end
+
 function init(plugin)
-  pluginRef=plugin; exiting=false; setPaired(false)
+  pluginRef=plugin; exiting=false; connecting=false; setPaired(false)
   state=dofile(plugin.path.."/state.lua")
   apply=dofile(plugin.path.."/apply.lua"); apply.configure(state)
+  importer=dofile(plugin.path.."/import-sprite-json.lua")
+  plugin:newCommand{id="AsepriteCliAiImportSpriteJson",title="Import Pixel Pipeline JSON",group="file_scripts",onclick=showImport}
   plugin:newCommand{id="AsepriteCliAiConnect",title="Connect CLI AI Editor",group="file_scripts",onclick=showStatus}
   plugin:newCommand{id="AsepriteCliAiStatus",title="Show AI Editor Status",group="file_scripts",onclick=showStatus}
   showStatus()
 end
 
 function exit(plugin)
-  exiting=true; setPaired(false); setProcessing(false)
+  exiting=true; connecting=false; setPaired(false); setProcessing(false)
   if statusDialog then local dialog=statusDialog; statusDialog=nil; dialog:close() end
   if ws then local socket=ws; ws=nil; socket:close() end
 end

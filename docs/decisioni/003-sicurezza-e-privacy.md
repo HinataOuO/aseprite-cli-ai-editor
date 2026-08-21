@@ -3,8 +3,8 @@
 **Stato:** accettata.
 
 - Bridge solo loopback, pairing con nonce monouso e correlazione richiesta/risposta.
-- Provider cloud disabilitato senza consenso esplicito (`AI_EDITOR_CLOUD_CONSENT=1`).
-- Credenziali solo da ambiente; mai in richieste, cache o log.
-- Log vietati per immagini, pixel, maschere, prompt completi e credenziali.
-- Al provider va solo crop minimo PNG, maschera, palette e intento minimo.
-- JSONL di calibrazione e cache sono locali, cancellabili e soggetti a retention configurabile; nessuna immagine completa è persistita.
+- Nessuna credenziale o configurazione provider: la generazione usa `image_gen` del modello host.
+- Log vietati per immagini, pixel, maschere e prompt completi.
+- Il PNG host può essere scritto soltanto nel percorso UUID assegnato; symlink e file irregolari sono rifiutati.
+- Snapshot e maschera vengono rivalidati prima di ogni applicazione.
+- I file temporanei vengono eliminati su successo, scadenza o esaurimento tentativi.

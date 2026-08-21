@@ -6,7 +6,7 @@ Trasformare una richiesta visiva, anche incompleta, in indicazioni artistiche st
 
 ## Responsabilità
 
-- esplicitare palette, dimensioni, stile, pose, livelli e animazioni richiesti;
+- esplicitare palette, dimensioni, stile, posa e layer richiesti;
 - distinguere una nuova generazione da una modifica puntuale;
 - preservare le parti non interessate quando l'utente indica un ambito preciso;
 - chiedere solo le informazioni mancanti che impediscono un risultato applicabile;
@@ -26,7 +26,7 @@ Una descrizione strutturata attesa contenente, quando pertinenti:
 - obiettivo e ambito della modifica;
 - destinazioni nel documento;
 - palette, dimensioni e stile;
-- pose, layer, frame e animazioni;
+- posa, layer e frame corrente;
 - vincoli da preservare;
 - informazioni ancora mancanti.
 
@@ -38,7 +38,7 @@ Il formato definitivo appartiene al [[../protocollo-dati/README|Protocollo Dati]
 
 Precedenza: vincoli tecnici del documento e della maschera → intento esplicito → stile osservato nel crop → default dipendente dalla risoluzione. Il compilatore elimina istruzioni incompatibili, per esempio outline continua e selettiva.
 
-L'analisi usa bounding box opaca, frequenze e luminosità palette, colori sul bordo trasparente, componenti connesse e densità. Le risoluzioni 16/32/64 applicano budget di dettaglio distinti; una figura fino a circa 48 px dentro un canvas 64×64 conserva il budget 48 px invece di acquisire dettaglio automaticamente.
+L'analisi usa bounding box opaca, frequenze e luminosità palette, colori sul bordo trasparente, componenti connesse e densità. Le risoluzioni 16/32/64/128 applicano budget di dettaglio distinti; una figura fino a circa 48 px dentro un canvas 64×64 conserva il budget 48 px, mentre 128 privilegia forme articolate, gerarchia dei cluster e dettaglio selettivo invece di scalare uniformemente il budget 64.
 
 ## Dipendenze
 
@@ -52,8 +52,8 @@ L'analisi usa bounding box opaca, frequenze e luminosità palette, colori sul bo
 - eseguire operazioni in Aseprite;
 - stabilire il trasporto o lo schema definitivo;
 - produrre Lua arbitrario;
-- chiedere raster o PNG al provider: l'output generativo è sempre un `Candidate` JSON row-major.
+- produrre formati alternativi: l’output generativo è un PNG del modello host, convertito localmente;
 
 ## Decisioni aperte
 
-Chiedere all'utente, solo quando non deducibili o indispensabili: dimensioni, palette, stile, vista o posa, numero di frame, timing, struttura dei layer, area da modificare e parti da preservare. Restano da definire soglie e ordine dei chiarimenti.
+Chiedere all'utente, solo quando non deducibili o indispensabili: dimensioni, palette, stile, vista o posa, layer, area da modificare e parti da preservare. Le animazioni sono fuori scope.

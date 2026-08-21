@@ -1,3 +1,6 @@
 .pi
 dist/
 node_modules/
+__pycache__/
+*.egg-info/
+.aseprite-ai-tmp/

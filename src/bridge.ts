@@ -4,15 +4,24 @@ import { MAX_PAYLOAD_BYTES, PROTOCOL_VERSION, type Capabilities, type ProtocolEr
 
 interface Pending { resolve(value: unknown): void; reject(reason: Error): void; timer: NodeJS.Timeout; type:string; requestBytes:number; started:number }
 
+export interface ConnectionInfo {
+  host: "127.0.0.1";
+  port: number;
+  nonce: string;
+  status: "awaiting_pairing" | "connected" | "disconnected";
+}
+
 export class BridgeServer {
   readonly nonce: string;
   private server: WebSocketServer | undefined;
   private socket: WebSocket | undefined;
   private paired = false;
   private usedNonce = false;
+  private boundPort: number | undefined;
   private sequence = 0;
   private readonly pending = new Map<string, Pending>();
   capabilities?: Capabilities;
+  private closing: Promise<void> | undefined;
 
   constructor(private readonly port = 32123, nonce?: string, private readonly timeoutMs = 10_000) {
     this.nonce = nonce ?? randomBytes(24).toString("base64url");
@@ -23,7 +32,13 @@ export class BridgeServer {
     this.server = new WebSocketServer({ host: "127.0.0.1", port: this.port, maxPayload: MAX_PAYLOAD_BYTES });
     this.server.on("connection", socket => this.accept(socket));
     await new Promise<void>((resolve, reject) => { this.server!.once("listening", resolve); this.server!.once("error", reject); });
-    return (this.server.address() as { port: number }).port;
+    this.boundPort = (this.server.address() as { port: number }).port;
+    return this.boundPort;
+  }
+
+  getConnectionInfo(): ConnectionInfo {
+    if (this.boundPort === undefined) throw new Error("bridge not started");
+    return { host: "127.0.0.1", port: this.boundPort, nonce: this.nonce, status: this.paired ? "connected" : this.usedNonce ? "disconnected" : "awaiting_pairing" };
   }
 
   private accept(socket: WebSocket): void {
@@ -81,10 +96,19 @@ export class BridgeServer {
   }
 
   async close(): Promise<void> {
-    this.socket?.close();
-    if (!this.server) return;
-    await new Promise<void>(resolve => this.server!.close(() => resolve()));
+    if (this.closing) return this.closing;
+    const server = this.server;
     this.server = undefined;
+    const socket = this.socket;
+    this.socket = undefined;
+    this.paired = false;
+    for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error("disconnected")); }
+    this.pending.clear();
+    socket?.terminate();
+    if (!server) return;
+    this.closing = new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+      .finally(() => { this.closing = undefined; });
+    return this.closing;
   }
 }
 

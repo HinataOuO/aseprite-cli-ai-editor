@@ -8,14 +8,14 @@ Consentire a chi usa Aseprite di descrivere in linguaggio naturale un nuovo dise
 
 - definire il problema: ridurre il passaggio manuale tra intento visivo e operazioni ripetitive nell'editor;
 - descrivere un'esperienza in cui l'utente resta nel controllo del documento e può correggere il risultato per iterazioni;
-- coprire sia la prima generazione sia modifiche localizzate a sprite, frame, layer o selezioni;
+- coprire sprite statici e modifiche localizzate al frame corrente, layer o selezione;
 - definire inizialmente “tempo reale” come feedback interattivo dopo ogni richiesta, senza una soglia di latenza ancora garantita.
 
 ## Input
 
 - obiettivo visivo espresso dall'utente;
 - eventuale documento, selezione o risultato esistente;
-- vincoli espliciti su stile, dimensioni, palette e animazione.
+- vincoli espliciti su stile, dimensioni e palette.
 
 ## Output
 
@@ -37,6 +37,6 @@ Una direzione condivisa per [[../agente-ai-cli/README|Agente Ai Cli]], [[../serv
 ## Decisioni aperte
 
 - soglia e modalità precise del feedback “in tempo reale”;
-- rappresentazione di pixel, primitive, immagini di riferimento e animazioni;
+- rappresentazione di pixel, primitive e immagini di riferimento;
 - quantità di controllo umano richiesta prima dell'applicazione;
 - limiti delle modifiche puntuali supportate inizialmente.

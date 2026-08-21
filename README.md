@@ -1,81 +1,79 @@
-# Aseprite CLI AI Editor — MVP
+# Aseprite CLI AI Editor
 
-Server MCP Node/TypeScript e plugin Aseprite Lua per modifiche pixel dichiarative, limitate da selezione, palette e snapshot. Aseprite resta autorità e ogni applicazione è una transazione undo.
+Pipeline per sprite statici e bridge MCP per modifiche pixel autorizzate. Aseprite resta l’autorità: palette, selezione, snapshot e transazione Undo vengono validati localmente.
 
-## Requisiti e installazione
+## Requisiti
 
 - Node.js 20+
-- Aseprite 1.3.0+
+- Python 3.11+
+- Aseprite 1.3+
 
 ```sh
 npm install
-npm run build
-npm test
-```
-
-Installa `plugin/` da **Edit → Preferences → Extensions → Add Extension** (zip rinominato `.aseprite-extension`, oppure cartella in `extensions`). In Pi il server MCP viene avviato automaticamente dall’estensione: non eseguire `npm start`. Esegui `/reload`, quindi nel pannello modeless **AI Editor** inserisci porta `32123` e nonce mostrati da Pi e premi **Connect**. Il pannello mostra pallino e testo `Connected`/`Disconnected`, oltre all'attività `Unavailable`/`Ready`/`Processing...` per l'intero comando MCP. Dopo il pairing porta, nonce e **Connect** lasciano posto a **Disconnect**, che chiude solo il WebSocket del plugin e ripristina i controlli di connessione senza terminare Node/MCP. La porta viene ricordata, il nonce no. Se chiudi il pannello, **File → Scripts → Connect CLI AI Editor** o **Show AI Editor Status** lo riaprono.
-
-## Provider
-
-Configura il provider OpenAI-compatible con `AI_EDITOR_PROVIDER_URL` e `AI_EDITOR_MODEL`; sono opzionali `AI_EDITOR_API_KEY` e `AI_EDITOR_MODEL_VERSION`. Endpoint loopback funzionano senza consenso cloud. Per endpoint remoti impostare esplicitamente `AI_EDITOR_CLOUD_CONSENT=1`; le credenziali restano in ambiente e non vengono loggate. Il fake provider è solo per test. I tre tentativi condividono un budget di generazione di 110 secondi: alla scadenza la richiesta HTTP viene annullata e torna un errore `timeout`.
-
-## Limiti MVP
-
-- sprite quadrati `16×16`, `32×32`, `64×64`;
-- modalità Indexed/RGB, palette singola;
-- niente grayscale, tilemap, reference layer o layer bloccati;
-- frame corrente; un layer di default, più layer solo con UUID espliciti e conferma;
-- `prepare_edit` produce anteprima e ID monouso; chiamare `commit_edit` solo dopo conferma utente;
-- l'ID scade dopo cinque minuti e viene invalidato a ogni tentativo di commit;
-- massimo tre tentativi di generazione entro un unico budget di 110 secondi;
-- i diff accettano `changes` puntuali e `spans` orizzontali compatti, fino a 4096 pixel espansi.
-
-## Privacy e recovery
-
-Al provider va soltanto crop minimo PNG, maschera, palette e intento minimo. Cache e campioni JSONL sono locali, content-addressed, soggetti a retention e cancellabili con `LocalStore.clear()`; immagini complete e credenziali sono rifiutate. Il bridge ascolta soltanto `127.0.0.1`, usa un nonce monouso e limita i messaggi a 1 MiB.
-
-Su `stale_snapshot`, riconnettere/rileggere lo stato e confermare una nuova maschera. Su errore d'applicazione la transazione viene annullata; un solo Undo ripristina una modifica riuscita.
-
-## Verifica con Aseprite reale
-
-Prerequisiti: `aseprite` nel `PATH`, versione `>=1.3.0`. Il comando unico esegue baseline Node e matrice Lua headless:
-
-```sh
 npm run verify
+cd pixel-art-pipeline && PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-Comandi separati, utili per isolare un difetto:
+## Generazione statica supportata
+
+Un file `sprite.json` canonico v1 rappresenta un solo sprite statico e viene importato come documento Indexed con un frame:
+
+```text
+image_gen → PNG → pixel-art-pipeline/scripts/generate.py → sprite.json → import Aseprite
+```
+
+```sh
+PYTHONPATH=pixel-art-pipeline/src python pixel-art-pipeline/scripts/generate.py \
+  --input generated.png --output out --size 64 --max-colors 256
+
+aseprite -b \
+  --script-param input="$PWD/out/sprite.json" \
+  --script-param output="$PWD/out/sprite.aseprite" \
+  --script plugin/import-sprite-json.lua
+```
+
+`--size` è obbligatorio (`16`, `32`, `64` o `128`): definisce il lato massimo e conserva le proporzioni. La pipeline accetta solo PNG statici reali, usa nearest-neighbor in ingrandimento e rimuove automaticamente soltanto lo sfondo opaco compatibile con il bordo e connesso ad esso. PNG già trasparenti restano intatti.
+
+In GUI: **File → Scripts → Import Pixel Pipeline JSON**. Senza `output` il documento resta aperto e non salvato. Limiti import: versione 1, dimensioni `1–128`, area massima 16384 pixel, palette RGBA massima 256 colori, nessuna animazione.
+
+## Modifica del documento via MCP
+
+Installa `plugin/` come estensione Aseprite. Il server espone cinque operazioni:
+
+```text
+inspect_aseprite_selection
+PNG locale ───────────────→ prepare_image_import ────────→ preview → approvazione → commit_edit
+prompt ─→ OpenAI Image API → prepare_prompt_generation ─→ preview → approvazione → commit_edit
+connessione ──────────────→ get_connection_info
+```
+
+Usare `$connection` per ottenere host, porta, nonce e stato senza richiedere un plugin già associato. In Aseprite aprire **File → Scripts → Connect CLI AI Editor** e inserire porta e nonce. Stati: `awaiting_pairing` indica nonce utilizzabile, `connected` plugin associato, `disconnected` nonce già consumato; in quest’ultimo caso riavviare il server MCP.
+
+Selezionare prima l’area in Aseprite. I tool `prepare_*` non cambiano il documento: applicano `contain` (default) o `cover`, campionamento centrale, rimozione dello sfondo collegato al bordo e palette adattiva, poi restituiscono PNG preview, `candidateId`, bounds, conteggio pixel, hash e scadenza. `paletteMode:"auto"` è il default: sostituisce la palette su documenti vuoti o compatibili, altrimenti usa quella corrente. `current` forza la palette esistente; `extract` forza quella sorgente e rifiuta documenti incompatibili. `maxColors` è opzionale (`1–256`, trasparenza inclusa); default: 4 a 16px, 8 a 32/64px, 16 a 128px. Solo `commit_edit`, dopo approvazione esplicita, crea il layer e applica l’eventuale palette in una transazione Undo-safe.
+
+Import locale: `AI_EDITOR_IMAGE_INPUT_DIR` limita i path consentiti; default directory di avvio. Sono ammessi solo file `.png` regolari, non symlink, entro 8 MiB e `2048×2048`.
+
+Generazione: impostare `OPENAI_API_KEY`; `OPENAI_IMAGE_MODEL` è opzionale e vale `gpt-image-2` per default. La chiave non viene registrata nei log.
+
+Esempi: “Importa `/workspace/hero.png` nella selezione.”; “Genera uno slime verde 32×32 nella selezione.”; oppure `prepare_prompt_generation({prompt:"slime verde",paletteMode:"extract",maxColors:8})`. In tutti i casi mostrare la preview, chiedere conferma, poi usare `commit_edit`.
+
+Il bridge usa WebSocket solo su `127.0.0.1`, pairing con nonce monouso e payload massimo 1 MiB. I diff applicabili restano `changes`/`spans`, fino a 16384 pixel, dentro la selezione e in una singola transazione Undo. Se il client MCP lascia attivo il processo di una chat precedente, impostare `AI_EDITOR_PORT=0` nella sua configurazione e usare nel plugin porta e nonce stampati su stderr; una nuova chat da sola non garantisce EOF o segnali al processo precedente.
+
+## Limiti documento MCP
+
+- dimensioni rettangolari `1–128` per lato, area massima 16384 pixel, incluso `72×48`;
+- Indexed/RGB, palette singola, frame corrente e image layer editabile;
+- niente grayscale, tilemap, reference layer, palette multiple o animazioni generate;
+- destinazione sempre nuovo layer; `commit_edit` richiede conferma e rivalida snapshot, hash e TTL.
+
+## Test
 
 ```sh
 npm run build
 npm test
-aseprite -b --script tests/lua/read-state.lua
-aseprite -b --script tests/lua/apply-diff.lua
-aseprite -b --script tests/lua/undo.lua
+npm run test:aseprite
 ```
 
-| Script/test | Modalità | Copertura |
-|---|---|---|
-| `tests/lua/read-state.lua` | headless | 16/32/64, Indexed/RGB, crop e selezione irregolare, cel traslato/assente, token, documenti non supportati |
-| `tests/lua/apply-diff.lua` | headless | apply Indexed/RGB, `changes`/`spans`, cerchio e fill 64×64, rollback, bordi, stale state e singolo Undo |
-| `tests/lua/undo.lua` | headless | caso braccio 32×32, linked cel, isolamento layer/frame, singolo Undo e batch invalido |
-| `tests/*.test.ts`, `tests/e2e/*.test.ts` | Node | protocollo, pipeline, retry, limiti, bridge e MCP |
-| pairing, `confirm_mask` | GUI manuale | WebSocket/plugin e correzione pixel-per-pixel |
+La suite Lua include import/salvataggio/riapertura di output rettangolari `72×48` e proporzionali `64×32`, palette con alpha, coordinate esatte e assenza di documenti residui su JSON invalido.
 
-Aseprite non offre un costruttore Lua pubblico per documenti multi-palette. Per validare un fixture reale:
-
-```sh
-aseprite -b --script-param multiplePalette=/path/multi-palette.aseprite --script tests/lua/read-state.lua
-```
-
-### Smoke test GUI/WebSocket
-
-1. Avvia `AI_EDITOR_PORT=0 npm start`; annota porta e nonce da stderr. Il pannello **AI Editor** deve mostrare pallino rosso, `Disconnected` e `Unavailable`.
-2. Inserisci porta e nonce nel pannello unico (riapribile da **File → Scripts → Connect CLI AI Editor**) e premi **Connect**. Con il nonce corretto deve mostrare soltanto **Disconnect**, pallino verde, `Connected` e `Ready`. Premi **Disconnect**: il socket deve chiudersi senza arrestare Node/MCP né mostrare un errore, e porta, nonce e **Connect** devono ricomparire con `Disconnected` e `Unavailable`. Riconnettiti, quindi arresta Node: deve tornare a `Disconnected` e `Unavailable` mostrando l'errore. Porta non intera/fuori range e nonce vuoto devono essere rifiutati nel pannello. Ripeti con nonce errato, replay e seconda connessione: devono essere rifiutati.
-3. Tramite client MCP chiama `prepare_edit`, conferma visivamente l'anteprima, poi `commit_edit`; lo stato deve essere `Processing...` dall'inizio del comando, inclusa l'attesa AI, e tornare sempre a `Ready`, anche su errore. Usa `read_snapshot`, `confirm_mask` e `apply_diff` soltanto per diagnosi. In `confirm_mask`, modifica la selezione e prova sia conferma sia annullamento (`confirmation_required`, sprite invariato).
-4. Leggi uno snapshot, modifica a mano pixel/palette/frame/layer/selezione e invia il vecchio diff: atteso `stale_snapshot`, nessuna scrittura.
-5. Verifica disconnessione e timeout. Registra versione Aseprite, modalità, esito e passi riproducibili per ogni difetto.
-
-Risultato locale corrente: baseline Node superata; matrice Aseprite non eseguita perché il binario non è disponibile nell’ambiente.
-
-Documentazione: [protocollo](docs/protocollo-dati/README.md), [flusso](docs/flusso-end-to-end/README.md), [plugin](docs/plugin-lua/README.md), [server](docs/server-mcp/README.md).
+Documentazione: [pipeline](pixel-art-pipeline/README.md), [plugin](docs/plugin-lua/README.md), [server MCP](docs/server-mcp/README.md), [protocollo](docs/protocollo-dati/README.md).

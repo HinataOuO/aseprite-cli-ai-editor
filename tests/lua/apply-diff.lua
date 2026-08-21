@@ -72,11 +72,14 @@ do
 end
 
 -- Canvas boundaries in Indexed and RGB: no clipping and no neighboring writes.
-for _,size in ipairs{16,64} do for _,mode in ipairs{ColorMode.INDEXED,ColorMode.RGB} do
-  local sprite,layer=newSprite(size,mode,Rectangle(0,0,size,size)); sprite.selection:select(Rectangle(0,0,size,size))
-  local before=state.read(); local result=apply.apply(diff(before,layer,{{x=0,y=0,paletteRef=1},{x=size-1,y=size-1,paletteRef=2}}))
-  assert(result.applied==2 and at(layer,1,0,0)==value(mode,1) and at(layer,1,size-1,size-1)==value(mode,2))
-  assert(at(layer,1,1,0)==value(mode,-1) and at(layer,1,size-2,size-1)==value(mode,-1)); sprite:close()
+for _,dimensions in ipairs{{16,16},{64,64},{128,128},{72,48}} do for _,mode in ipairs{ColorMode.INDEXED,ColorMode.RGB} do
+  local width,height=dimensions[1],dimensions[2]
+  local sprite=Sprite(width,height,mode); palette(sprite); local layer=sprite.layers[1]
+  layer:cel(1).image=Image(width,height,mode); app.activeLayer=layer; app.activeFrame=sprite.frames[1]
+  sprite.selection:select(Rectangle(0,0,width,height))
+  local before=state.read(); local result=apply.apply(diff(before,layer,{{x=0,y=0,paletteRef=1},{x=width-1,y=height-1,paletteRef=2}}))
+  assert(result.applied==2 and at(layer,1,0,0)==value(mode,1) and at(layer,1,width-1,height-1)==value(mode,2))
+  assert(at(layer,1,1,0)==value(mode,-1) and at(layer,1,width-2,height-1)==value(mode,-1)); sprite:close()
 end end
 
 -- Compact spans coexist with legacy changes.
@@ -89,15 +92,15 @@ do
   sprite:close()
 end
 
--- 64x64 circle and fill expand and verify well inside the 10-second bridge timeout.
+-- 128x128 fill expands to the protocol maximum in one undo transaction.
 do
-  local sprite,layer=newSprite(64,ColorMode.INDEXED,Rectangle(0,0,64,64)); sprite.selection:select(Rectangle(0,0,64,64))
-  local spans={}; for y=0,63 do spans[#spans+1]={x=0,y=y,length=64,paletteRef=1} end
+  local sprite,layer=newSprite(128,ColorMode.INDEXED,Rectangle(0,0,128,128)); sprite.selection:select(Rectangle(0,0,128,128))
+  local spans={}; for y=0,127 do spans[#spans+1]={x=0,y=y,length=128,paletteRef=1} end
   local before=state.read(); local undoSteps=sprite.undoHistory.undoSteps; local started=os.clock()
   local result=apply.apply(spanDiff(before,layer,spans))
-  assert(os.clock()-started<10 and result.applied==4096 and sprite.undoHistory.undoSteps==undoSteps+1)
-  assert(at(layer,1,0,0)==1 and at(layer,1,63,63)==1)
-  app.undo(); assert(at(layer,1,0,0)==0 and at(layer,1,63,63)==0)
+  assert(os.clock()-started<10 and result.applied==16384 and sprite.undoHistory.undoSteps==undoSteps+1)
+  assert(at(layer,1,0,0)==1 and at(layer,1,127,127)==1)
+  app.undo(); assert(at(layer,1,0,0)==0 and at(layer,1,127,127)==0)
   sprite:close()
 end
 do
@@ -128,6 +131,68 @@ do
   sprite:close()
 end
 
+-- Extracted palette and new layer share one Undo step in Indexed and RGB modes.
+for _,mode in ipairs{ColorMode.INDEXED,ColorMode.RGB} do
+  local sprite,source=newSprite(16,mode); sprite.selection:select(Rectangle(2,2,2,1))
+  local before=state.read(); assert(before.documentEmpty)
+  local oldSize=#sprite.palettes[1]; local oldColor=sprite.palettes[1]:getColor(1).rgbaPixel
+  local layers=#sprite.layers; local undoSteps=sprite.undoHistory.undoSteps
+  local request=diff(before,source,{{x=2,y=2,paletteRef=1},{x=3,y=2,paletteRef=2}})
+  request.createLayer=true; request.palette={{index=0,rgba=0},{index=1,rgba=0x102030ff},{index=2,rgba=0xa0b0c0ff}}
+  local result=apply.apply(request); local target=app.activeLayer
+  assert(result.verified and sprite.colorMode==mode and #sprite.palettes[1]==3 and sprite.spec.transparentColor==0)
+  assert(sprite.palettes[1]:getColor(1).rgbaPixel==app.pixelColor.rgba(0x10,0x20,0x30,0xff))
+  assert(at(target,1,2,2)==(mode==ColorMode.INDEXED and 1 or app.pixelColor.rgba(0x10,0x20,0x30,0xff)))
+  assert(at(target,1,0,0)==(mode==ColorMode.INDEXED and 0 or app.pixelColor.rgba(0,0,0,0)))
+  assert(#sprite.layers==layers+1 and sprite.undoHistory.undoSteps==undoSteps+1)
+  app.undo()
+  assert(#sprite.layers==layers and #sprite.palettes[1]==oldSize and sprite.palettes[1]:getColor(1).rgbaPixel==oldColor)
+  sprite:close()
+end
+
+-- Compatible palette replacement remaps indexed pixels by exact RGBA.
+do
+  local sprite,layer=newSprite(16,ColorMode.INDEXED); layer:cel(1).image:drawPixel(0,0,1)
+  sprite.selection:select(Rectangle(1,1,1,1)); local before=state.read()
+  local request=diff(before,layer,{{x=1,y=1,paletteRef=1}}); request.createLayer=true
+  request.palette={{index=0,rgba=0},{index=1,rgba=0x00ff00ff},{index=2,rgba=0xff0000ff}}
+  apply.apply(request)
+  assert(at(layer,1,0,0)==2 and sprite.palettes[1]:getColor(2).rgbaPixel==app.pixelColor.rgba(255,0,0,255))
+  sprite:close()
+end
+
+-- Incompatible palette replacement rejects nonempty documents before mutation.
+do
+  local sprite,layer=newSprite(16,ColorMode.INDEXED); layer:cel(1).image:drawPixel(0,0,1)
+  sprite.selection:select(Rectangle(1,1,1,1)); local before=state.read(); local oldColor=sprite.palettes[1]:getColor(1).rgbaPixel
+  local request=diff(before,layer,{{x=1,y=1,paletteRef=1}}); request.createLayer=true; request.palette={{index=0,rgba=0},{index=1,rgba=0x010203ff}}
+  fails("unsupported_document",function() apply.apply(request) end)
+  assert(#sprite.layers==1 and sprite.palettes[1]:getColor(1).rgbaPixel==oldColor)
+  sprite:close()
+end
+
+-- Compatible replacement leaves existing RGB cel values unchanged.
+do
+  local sprite,layer=newSprite(16,ColorMode.RGB); local red=app.pixelColor.rgba(255,0,0,255)
+  layer:cel(1).image:drawPixel(0,0,red); sprite.selection:select(Rectangle(1,1,1,1)); local before=state.read()
+  local request=diff(before,layer,{{x=1,y=1,paletteRef=1}}); request.createLayer=true
+  request.palette={{index=0,rgba=0},{index=1,rgba=0x00ff00ff},{index=2,rgba=0xff0000ff}}
+  apply.apply(request)
+  assert(at(layer,1,0,0)==red)
+  sprite:close()
+end
+
+-- Failure after palette write rolls palette and layer back together.
+do
+  local sprite,layer=newSprite(16,ColorMode.INDEXED); sprite.selection:select(Rectangle(0,0,1,1))
+  local before=state.read(); local oldSize=#sprite.palettes[1]; local oldColor=sprite.palettes[1]:getColor(1).rgbaPixel; local undoSteps=sprite.undoHistory.undoSteps
+  local request=spanDiff(before,layer,{{x=0,y=0,length=1,paletteRef=1},{x=0,y=0,length=1,paletteRef=2}})
+  request.createLayer=true; request.palette={{index=0,rgba=0},{index=1,rgba=0x010203ff},{index=2,rgba=0x040506ff}}
+  fails("apply_failed",function() apply.apply(request) end)
+  assert(#sprite.layers==1 and #sprite.palettes[1]==oldSize and sprite.palettes[1]:getColor(1).rgbaPixel==oldColor and sprite.undoHistory.undoSteps==undoSteps)
+  sprite:close()
+end
+
 -- Every rejected diff leaves token and pixels unchanged, including mixed batches.
 local function rejected(code,mutate)
   local sprite,layer=newSprite(16,ColorMode.INDEXED,Rectangle(0,0,16,16)); sprite.selection:select(Rectangle(0,0,2,2))
@@ -139,14 +204,14 @@ rejected("unauthorized_change: canvas",function(d) d.changes={{x=0,y=0,paletteRe
 rejected("unauthorized_change: mask",function(d) d.changes={{x=0,y=0,paletteRef=1},{x=3,y=3,paletteRef=1}} end)
 rejected("validation_failed",function(d) d.changes={{x=0,y=0,paletteRef=1},{x=1,y=1,paletteRef=999}} end)
 rejected("validation_failed",function(d) d.spans={{x=0,y=0,length=0,paletteRef=1}} end)
-rejected("validation_failed",function(d) d.spans={{x=0,y=0,length=4096,paletteRef=1}} end)
+rejected("validation_failed",function(d) d.spans={{x=0,y=0,length=16384,paletteRef=1}} end)
 rejected("validation_failed",function(d) d.spans="not-an-array" end)
 rejected("unauthorized_change: canvas",function(d) d.changes={}; d.spans={{x=16,y=0,length=1,paletteRef=1}} end)
 rejected("stale_snapshot",function(d) d.snapshotToken="old" end)
 rejected("stale_snapshot",function(d) d.spriteId=d.spriteId+1 end)
 rejected("stale_snapshot",function(d) d.frame=2 end)
-rejected("unauthorized_change: layer",function(d,sprite,active) local other=sprite:newLayer(); d.layerUuid=tostring(other.uuid); app.activeLayer=active end)
-rejected("unauthorized_change: layer",function(d,sprite,active) local other=sprite:newLayer(); other.isEditable=false; d.layerUuid=tostring(other.uuid); app.activeLayer=active end)
+rejected("stale_snapshot",function(d,sprite,active) local other=sprite:newLayer(); d.layerUuid=tostring(other.uuid); app.activeLayer=active end)
+rejected("stale_snapshot",function(d,sprite,active) local other=sprite:newLayer(); other.isEditable=false; d.layerUuid=tostring(other.uuid); app.activeLayer=active end)
 
 -- Conflicting overlap fails post-write verification and rolls the transaction back.
 do

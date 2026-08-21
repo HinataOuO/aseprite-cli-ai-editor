@@ -1,0 +1,21 @@
+# Downsampling is deterministic; upsampling always uses nearest-neighbor.
+grid:
+  sampling_method: dominant
+  sample_offset_x: 0
+  sample_offset_y: 0
+
+# Aseprite Indexed supports at most 256 entries.
+palette:
+  max_colors: 256
+
+# Applied only when the source has no transparency.
+cleanup:
+  background_tolerance: 12
+
+# Preview is enlarged only with nearest-neighbor interpolation.
+render:
+  preview_scale: 8
+
+validation:
+  require_binary_alpha: false
+  max_colors: null

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "test-roster",
+  "nativeHeight": { "min": 32, "max": 48 },
+  "proportions": ["slightly-large-head", "compact-torso", "thin-readable-limbs"],
+  "anatomy": ["clear-joints", "readable-hands"],
+  "outline": { "mode": "selective", "thickness": 1, "treatment": "colored" },
+  "shading": { "valuesPerMaterial": [3, 4], "light": "top-front", "edges": "hard" },
+  "clusters": { "size": { "min": 2, "max": 12 }, "detailDensity": { "min": 0.25, "max": 0.75 }, "antiAliasing": false, "maxColors": 5 },
+  "paletteRoles": { "outline": [0], "shadow": [2], "base": [5, 8], "highlight": [9] },
+  "priorityAccessories": ["one-readable-accessory"],
+  "negativeConstraints": ["no pillow shading"],
+  "styleNotes": ["compact fantasy roster"],
+  "references": [
+    { "path": "maid.png", "purpose": "proportions-and-rendering" },
+    { "path": "fighter.png", "purpose": "clusters-and-outline" }
+  ],
+  "locked": ["nativeHeight", "outline.mode", "outline.thickness", "shading.light", "paletteRoles"]
+}

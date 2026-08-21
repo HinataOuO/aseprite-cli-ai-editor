@@ -10,7 +10,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/index.js",
     "test": "tsx --test tests/*.test.ts tests/e2e/*.test.ts",
-    "test:aseprite": "aseprite -b --script tests/lua/read-state.lua && aseprite -b --script tests/lua/apply-diff.lua && aseprite -b --script tests/lua/undo.lua",
+    "test:aseprite": "aseprite -b --script tests/lua/read-state.lua && aseprite -b --script tests/lua/apply-diff.lua && aseprite -b --script tests/lua/undo.lua && aseprite -b --script tests/lua/import-sprite-json.lua",
     "verify": "npm run build && npm test && npm run test:aseprite"
   },
   "dependencies": {

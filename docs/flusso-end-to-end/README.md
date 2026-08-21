@@ -1,16 +1,28 @@
-# Flusso end-to-end MVP
+# Flussi end-to-end
 
-1. Il server MCP apre un WebSocket su `127.0.0.1` e mostra su stderr un nonce monouso.
-2. Il comando del plugin connette Aseprite e invia nonce, versione e capability. Nonce errati/replay chiudono la connessione.
-3. `read_snapshot` legge solo frame/layer attivi, palette, selezione e crop minimo. Lo snapshot SHA-256 lega sprite, frame, layer UUID, image ID/version, palette, trasparenza, maschera e pixel.
-4. La selezione presente diventa l'unica maschera. Senza selezione, Vision propone una maschera: `<70` richiede una nuova proposta; `70–90` conferma/correzione; `>90` può evitare conferma solo dopo 30 campioni e approvazione modello/versione. Nel bootstrap la conferma è sempre obbligatoria.
-5. Il server costruisce una specifica immutabile. Più layer richiedono UUID espliciti e confermati.
-6. Il server analizza una volta il crop corrente e risolve un `ArtDirectionProfile`: vincoli tecnici → intento esplicito → stile osservato → default di risoluzione. Il profilo assegna outline, shadow, base e highlight a indici palette reali.
-7. Il compilatore produce un art brief positivo/negativo e uno schema `Candidate` esatto. Al provider vanno brief, profilo, crop PNG, maschera, palette e intento; non viene richiesto né accettato Lua o raster generato.
-8. Il server valida token, dimensioni, palette/trasparenza, maschera, frame e layer, poi controlla criteri artistici deterministici (numero colori, densità e spessore outline) e produce il diff minimo. I retry mantengono identici profilo, schema e autorizzazioni e aggiungono soltanto errori e diff precedente; massimo tre.
-9. Lo score semantico resta osservativo e versionato. Fino all'approvazione della calibrazione richiede sempre conferma; dopo: `<50` retry, `50–70` conferma, `>70` applicazione.
-10. Immediatamente prima della scrittura il plugin rivalida lo snapshot, clona l'immagine, applica il `PixelDiff` e assegna `cel.image` in una sola `app.transaction`. Ogni errore fa rollback; la UI si aggiorna solo dopo commit.
+## Generazione di uno sprite statico
 
-## Punti di arresto
+```text
+image_gen → PNG → pixel-art-pipeline/scripts/generate.py → sprite.json → import Aseprite
+```
 
-`unsupported_document`, pairing fallito, provider indisponibile, token scaduto, output non valido, rifiuto utente o terzo tentativo lasciano il documento invariato. Una modifica concorrente durante Vision produce `stale_snapshot` e richiede una nuova lettura.
+1. `image_gen` produce un PNG statico reale.
+2. `generate.py --size 16|32|64|128` imposta il lato massimo, conserva le proporzioni, campiona senza antialias e rimuove lo sfondo opaco connesso al bordo. PNG già trasparenti restano intatti.
+3. `generate.py` limita la palette e scrive il formato canonico v1 (`width`, `height`, `palette`, `pixels`, `metadata`) più `sprite.png` e `preview.png`.
+4. `plugin/import-sprite-json.lua` valida tutto il JSON prima di creare un documento.
+5. L’import produce un documento Indexed, un frame e un cel. In GUI resta non salvato; headless salva `.aseprite` solo con `output`.
+
+L'euristica di sfondo usa colore dominante e flood-fill dal bordo: non sostituisce una segmentazione e non distingue in modo affidabile soggetto e sfondo quasi identici.
+
+Nessuna animazione o secondo formato JSON Aseprite.
+
+## Modifica autorizzata via MCP
+
+1. Il plugin effettua pairing col bridge loopback tramite nonce monouso.
+2. `prepare_image_import` legge un PNG sotto `AI_EDITOR_IMAGE_INPUT_DIR`, oppure `prepare_prompt_generation` ottiene un PNG dalla OpenAI Image API.
+3. Il tool valida snapshot e PNG, esegue il fixer locale, forza trasparenza fuori maschera e costruisce Candidate e PixelDiff per un nuovo layer. `contain` conserva proporzioni e centra con padding; `cover` ritaglia al centro.
+4. Con `paletteMode:"auto"` estrae una palette adattiva e la usa se contiene esattamente tutti i colori RGBA già presenti; altrimenti rimappa sulla palette corrente. `current` forza quella esistente, `extract` forza quella sorgente o fallisce. Indice `0` resta riservato alla trasparenza.
+5. L’utente deve confermare la preview.
+6. Solo dopo la preview, `commit_edit` rivalida snapshot e compatibilità palette; il plugin rimappa gli indici esistenti per RGBA e applica palette, transparent index e nuovo layer in una sola `app.transaction` verificata.
+
+File/provider non valido, timeout, snapshot stale, scadenza o rifiuto utente lasciano il documento invariato.

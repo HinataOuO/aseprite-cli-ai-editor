@@ -10,12 +10,25 @@ const candidate=(overrides:Record<string,unknown>={})=>({snapshotToken:"t",bound
 
 test("valid candidate yields minimal canvas-coordinate diff",()=>assert.deepEqual(candidateDiff(candidate(),snapshot,spec).changes,[{x:2,y:3,paletteRef:1},{x:2,y:4,paletteRef:-1}]));
 
+test("horizontal runs become spans while single pixels remain changes",()=>{
+  const full=buildSpec({...snapshot,selection:{bounds:mask.bounds,bits:"Dw=="}},"edit");
+  const diff=candidateDiff({snapshotToken:"t",bounds:mask.bounds,paletteRefs:[1,1,1,0]},snapshot,full);
+  assert.deepEqual(diff.spans,[{x:2,y:3,length:2,paletteRef:1}]);assert.deepEqual(diff.changes,[{x:2,y:4,paletteRef:1}]);
+});
+
 test("compact spans coexist with legacy changes within the expanded pixel limit",()=>{
-  const diff=validatePixelDiff({snapshotToken:"t",spriteId:1,frame:2,layerUuid:"a",changes:[{x:0,y:0,paletteRef:1}],spans:[{x:1,y:0,length:4095,paletteRef:-1}]});
-  assert.equal(diff.changes.length,1); assert.equal(diff.spans?.[0]?.length,4095);
+  const diff=validatePixelDiff({snapshotToken:"t",spriteId:1,frame:2,layerUuid:"a",changes:[{x:0,y:0,paletteRef:1}],spans:[{x:1,y:0,length:16383,paletteRef:-1}]});
+  assert.equal(diff.changes.length,1); assert.equal(diff.spans?.[0]?.length,16383);
   assert.deepEqual(validatePixelDiff({...diff,changes:undefined}).changes,[]);
-  assert.throws(()=>validatePixelDiff({...diff,spans:[{x:0,y:0,length:4096,paletteRef:1}]}),/4096/);
+  assert.throws(()=>validatePixelDiff({...diff,spans:[{x:0,y:0,length:16384,paletteRef:1}]}),/16384/);
   assert.throws(()=>validatePixelDiff({...diff,spans:[{x:0,y:0,length:0,paletteRef:1}]}),/integer/);
+});
+
+test("validates optional replacement palette shape",()=>{
+  const base={snapshotToken:"t",spriteId:1,frame:2,layerUuid:"a",changes:[{x:0,y:0,paletteRef:1}]};
+  assert.equal(validatePixelDiff({...base,palette:[{index:0,rgba:0},{index:1,rgba:0x010203ff}]}).palette?.length,2);
+  assert.throws(()=>validatePixelDiff({...base,palette:[{index:1,rgba:0},{index:0,rgba:0x010203ff}]}),/sequential/);
+  assert.throws(()=>validatePixelDiff({...base,palette:[{index:0,rgba:255}]}),/transparent index 0/);
 });
 for(const [name,value,pattern] of [
   ["snapshot",candidate({snapshotToken:"old"}),/stale_snapshot/],

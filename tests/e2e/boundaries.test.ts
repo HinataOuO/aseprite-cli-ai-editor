@@ -11,3 +11,9 @@ for(const size of [16,64] as const)for(const colorMode of ["indexed","rgb"] as c
   assert.ok(cropPng(snapshot).length>0);
   assert.deepEqual(candidateDiff({snapshotToken:snapshot.token,bounds:mask.bounds,paletteRefs:[1]},snapshot,buildSpec(snapshot,"edge")).changes,[{x:size-1,y:size-1,paletteRef:1}]);
 });
+
+test("128x128 boundary and compact full rows",()=>{
+  const size=128 as const,mask={bounds:{x:127,y:127,width:1,height:1},bits:"AQ=="};
+  const snapshot={token:"128",spriteId:1,width:size,height:size,colorMode:"indexed" as const,frame:1,activeLayerUuid:"a",layers:[{uuid:"a",imageId:1,imageVersion:1,editable:true}],palette:[{index:0,rgba:255},{index:1,rgba:0xffffffff}],selection:mask,crop:{bounds:mask.bounds,paletteRefs:[0]}} satisfies Snapshot;
+  assert.deepEqual(candidateDiff({snapshotToken:"128",bounds:mask.bounds,paletteRefs:[1]},snapshot,buildSpec(snapshot,"edge")).changes,[{x:127,y:127,paletteRef:1}]);
+});
